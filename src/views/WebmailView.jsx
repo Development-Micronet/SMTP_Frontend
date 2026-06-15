@@ -2,16 +2,23 @@ import React, { useState, useEffect, useRef } from 'react';
 import { 
   Inbox, Send, FileText, ShieldAlert, Bell, Users, Mail,
   Search, RefreshCw, Trash2, Edit, LogOut, ShieldAlert as AdminIcon,
-  Paperclip, X, ChevronRight, User, Calendar, Plus, ChevronLeft
+  Paperclip, X, ChevronRight, User, Calendar, Plus, ChevronLeft,
+  Star, MoreVertical, ChevronDown, ShieldOff, ShieldCheck
 } from 'lucide-react';
 import { request } from '../api/client';
 
 export default function WebmailView({ user, onLogout, onNavigateToAdmin, onNavigateToTenant }) {
   const [folders, setFolders] = useState(['INBOX', 'Sent', 'Drafts', 'Spam', 'Notifications', 'Social']);
   const [activeFolder, setActiveFolder] = useState('INBOX');
+  const [spamReporting, setSpamReporting] = useState(false);
   const [messages, setMessages] = useState([]);
   const [selectedMessage, setSelectedMessage] = useState(null);
   const [messageDetails, setMessageDetails] = useState(null);
+  const [expandedMessages, setExpandedMessages] = useState({});
+  const [selectedUids, setSelectedUids] = useState({});
+  const [starredUids, setStarredUids] = useState({});
+  const [currentPage, setCurrentPage] = useState(1);
+  const PAGE_SIZE = 20;
   
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearching, setIsSearching] = useState(false);
@@ -21,6 +28,7 @@ export default function WebmailView({ user, onLogout, onNavigateToAdmin, onNavig
   const [syncingMailbox, setSyncingMailbox] = useState(false);
 
   const [showCompose, setShowCompose] = useState(false);
+  const [isSearchFocused, setIsSearchFocused] = useState(false);
   const [composeTo, setComposeTo] = useState('');
   const [composeCc, setComposeCc] = useState('');
   const [composeSubject, setComposeSubject] = useState('');
@@ -29,6 +37,69 @@ export default function WebmailView({ user, onLogout, onNavigateToAdmin, onNavig
   const [sending, setSending] = useState(false);
 
   const fileInputRef = useRef(null);
+  const avatarInputRef = useRef(null);
+  const [avatar, setAvatar] = useState(user.avatar || null);
+
+  const handleAvatarClick = () => {
+    if (avatarInputRef.current) {
+      avatarInputRef.current.click();
+    }
+  };
+
+  const handleAvatarChange = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const max_size = 128;
+        let width = img.width;
+        let height = img.height;
+
+        if (width > height) {
+          if (width > max_size) {
+            height *= max_size / width;
+            width = max_size;
+          }
+        } else {
+          if (height > max_size) {
+            width *= max_size / height;
+            height = max_size;
+          }
+        }
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, width, height);
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+
+        uploadAvatar(dataUrl);
+      };
+      img.src = event.target.result;
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const uploadAvatar = async (dataUrl) => {
+    try {
+      const res = await request('/api/mailbox/avatar/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ avatar: dataUrl })
+      });
+      if (res.status === 'success') {
+        setAvatar(dataUrl);
+        alert('Profile picture updated successfully!');
+      } else {
+        alert('Failed to update profile picture.');
+      }
+    } catch (err) {
+      alert('Error uploading avatar: ' + err.message);
+    }
+  };
 
   // Fetch Folders
   useEffect(() => {
@@ -73,6 +144,8 @@ export default function WebmailView({ user, onLogout, onNavigateToAdmin, onNavig
   // Handle Search
   const handleSearch = async (e) => {
     e.preventDefault();
+    setCurrentPage(1);
+    setSelectedUids({});
     if (!searchQuery.trim()) {
       fetchMessages(activeFolder, false);
       return;
@@ -98,6 +171,7 @@ export default function WebmailView({ user, onLogout, onNavigateToAdmin, onNavig
     try {
       const res = await request(`/api/messages/${encodeURIComponent(msg.folder)}/${msg.uid}/`);
       setMessageDetails(res);
+      setExpandedMessages({ [msg.uid]: true });
       // Mark as seen locally
       setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, seen: true } : m));
     } catch (err) {
@@ -122,6 +196,32 @@ export default function WebmailView({ user, onLogout, onNavigateToAdmin, onNavig
       }
     } catch (err) {
       alert('Failed to delete email: ' + err.message);
+    }
+  };
+
+  // Spam / Ham reporting — trains rspamd Bayesian filter
+  const handleSpamReport = async (msg, action) => {
+    if (!msg) return;
+    setSpamReporting(true);
+    try {
+      await request('/api/spam-report/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ folder: msg.folder, uid: msg.uid, action }),
+      });
+      // Remove the message from the current list and close reader
+      setMessages(prev => prev.filter(m => m.uid !== msg.uid || m.folder !== msg.folder));
+      setSelectedMessage(null);
+      setMessageDetails(null);
+      const label = action === 'spam' ? 'marked as spam' : 'moved to Inbox';
+      // Brief toast-like notification via title flash
+      const origTitle = document.title;
+      document.title = `✅ Message ${label}`;
+      setTimeout(() => { document.title = origTitle; }, 2500);
+    } catch (err) {
+      alert(`Failed to report as ${action}: ${err.message}`);
+    } finally {
+      setSpamReporting(false);
     }
   };
 
@@ -210,22 +310,39 @@ export default function WebmailView({ user, onLogout, onNavigateToAdmin, onNavig
     });
   };
 
+  const toggleSelectRow = (e, uid) => {
+    e.stopPropagation();
+    setSelectedUids(prev => ({ ...prev, [uid]: !prev[uid] }));
+  };
+
+  const toggleStarRow = (e, uid) => {
+    e.stopPropagation();
+    setStarredUids(prev => ({ ...prev, [uid]: !prev[uid] }));
+  };
+
+  const startIndex = (currentPage - 1) * PAGE_SIZE;
+  const endIndex = startIndex + PAGE_SIZE;
+  const paginatedMessages = messages.slice(startIndex, endIndex);
+  const startRange = messages.length === 0 ? 0 : startIndex + 1;
+  const endRange = Math.min(endIndex, messages.length);
+  const totalCount = messages.length;
+
   return (
     <div style={styles.appContainer}>
       {/* Sidebar */}
       <aside style={styles.sidebar}>
         <div style={styles.sidebarHeader}>
           <div style={styles.logoContainer}>
-            <Mail size={22} color="#6366f1" />
+            <Mail size={24} color="var(--color-primary)" />
           </div>
           <div>
-            <div style={styles.logoText}>MailStack</div>
+            <div style={styles.logoText}>Micronet Mail</div>
             <div style={styles.activeMailbox}>{user.mailbox || 'No Mailbox'}</div>
           </div>
         </div>
 
         <button style={styles.composeBtn} onClick={() => setShowCompose(true)}>
-          <Plus size={18} style={{ marginRight: '8px' }} />
+          <Plus size={20} color="var(--color-primary)" />
           <span>Compose</span>
         </button>
 
@@ -239,16 +356,18 @@ export default function WebmailView({ user, onLogout, onNavigateToAdmin, onNavig
                     ...styles.folderItem,
                     backgroundColor: activeFolder === folder ? 'var(--color-primary-soft)' : 'transparent',
                     color: activeFolder === folder ? 'var(--color-primary)' : 'var(--text-secondary)',
-                    fontWeight: activeFolder === folder ? '600' : '400',
+                    fontWeight: activeFolder === folder ? '700' : '500',
                   }}
                   onClick={() => {
                     setActiveFolder(folder);
                     setSelectedMessage(null);
                     setMessageDetails(null);
                     setSearchQuery('');
+                    setCurrentPage(1);
+                    setSelectedUids({});
                   }}
                 >
-                  <span style={{ marginRight: '10px', display: 'flex', alignItems: 'center' }}>
+                  <span style={{ marginRight: '12px', display: 'flex', alignItems: 'center' }}>
                     {getFolderIcon(folder)}
                   </span>
                   <span>{folder === 'INBOX' ? 'Inbox' : folder}</span>
@@ -261,46 +380,79 @@ export default function WebmailView({ user, onLogout, onNavigateToAdmin, onNavig
             <>
               <div style={styles.sectionHeader}>Administration</div>
               <button style={styles.adminLink} onClick={onNavigateToAdmin}>
-                <AdminIcon size={18} style={{ marginRight: '10px' }} />
+                <AdminIcon size={18} style={{ marginRight: '12px' }} />
                 <span>Admin Control Panel</span>
               </button>
             </>
           )}
 
-          {/* SaaS Workspace Management */}
           <>
             <div style={styles.sectionHeader}>Workspace</div>
             <button style={styles.tenantLink} onClick={onNavigateToTenant}>
-              <Users size={18} style={{ marginRight: '10px' }} />
+              <Users size={18} style={{ marginRight: '12px' }} />
               <span>Manage Workspace</span>
             </button>
           </>
         </nav>
 
         <div style={styles.sidebarFooter}>
-          <div style={styles.userInfo}>
-            <User size={16} style={{ marginRight: '8px', color: 'var(--text-secondary)' }} />
+          <div 
+            style={{ ...styles.userInfo, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px' }} 
+            onClick={handleAvatarClick}
+            title="Click to change profile picture"
+          >
+            {avatar ? (
+              <img src={avatar} style={{ width: '28px', height: '28px', borderRadius: '50%', objectFit: 'cover' }} alt="Avatar" />
+            ) : (
+              <div style={{
+                width: '28px',
+                height: '28px',
+                borderRadius: '50%',
+                backgroundColor: 'var(--color-primary-soft)',
+                color: 'var(--color-primary)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontWeight: '600',
+                fontSize: '0.8rem'
+              }}>
+                {user.username ? user.username[0].toUpperCase() : 'U'}
+              </div>
+            )}
             <span style={styles.username}>{user.username}</span>
           </div>
+          <input 
+            type="file" 
+            ref={avatarInputRef} 
+            style={{ display: 'none' }} 
+            accept="image/*" 
+            onChange={handleAvatarChange} 
+          />
           <button style={styles.logoutBtn} onClick={handleLogoutClick} title="Logout">
-            <LogOut size={16} />
+            <LogOut size={16} style={{ marginRight: '8px' }} />
             <span>Logout</span>
           </button>
         </div>
       </aside>
 
-      {/* Main Content Area: Split List & Detail */}
+      {/* Main Content */}
       <main style={styles.mainContent}>
-        {/* Top Header Bar */}
+        {/* Top Header */}
         <header style={styles.topHeader}>
           <form onSubmit={handleSearch} style={styles.searchForm}>
             <Search size={18} style={styles.searchIcon} />
             <input
               type="text"
-              placeholder="Search in mailbox..."
+              placeholder="Search mail..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              style={styles.searchInput}
+              onFocus={() => setIsSearchFocused(true)}
+              onBlur={() => setIsSearchFocused(false)}
+              style={{
+                ...styles.searchInput,
+                backgroundColor: isSearchFocused ? '#ffffff' : 'var(--bg-tertiary)',
+                boxShadow: isSearchFocused ? '0 1px 3px rgba(60,64,67,0.3)' : 'none',
+              }}
             />
             {searchQuery && (
               <button type="button" onClick={() => setSearchQuery('')} style={styles.clearSearch}>
@@ -308,23 +460,76 @@ export default function WebmailView({ user, onLogout, onNavigateToAdmin, onNavig
               </button>
             )}
           </form>
-          
-          <button 
-            style={styles.refreshBtn} 
-            onClick={() => fetchMessages(activeFolder, true)}
-            disabled={loadingList || syncingMailbox}
-          >
-            <RefreshCw size={18} className={syncingMailbox ? 'animate-spin' : ''} />
-          </button>
         </header>
 
-        {/* Dynamic Split View */}
+        {/* Split View */}
         <div style={styles.splitView}>
           {/* Email List Column */}
           <section style={{
             ...styles.listPane,
             width: selectedMessage ? '40%' : '100%',
           }}>
+            {/* Action Sub-Header */}
+            <div style={styles.listActionBar}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  <input
+                    type="checkbox"
+                    checked={paginatedMessages.length > 0 && paginatedMessages.every(m => selectedUids[m.uid])}
+                    onChange={(e) => {
+                      const allSelected = paginatedMessages.every(m => selectedUids[m.uid]);
+                      if (allSelected) {
+                        setSelectedUids({});
+                      } else {
+                        const nextSelected = { ...selectedUids };
+                        paginatedMessages.forEach(m => { nextSelected[m.uid] = true; });
+                        setSelectedUids(nextSelected);
+                      }
+                    }}
+                    style={styles.actionCheckbox}
+                  />
+                  <ChevronDown size={14} style={{ color: 'var(--text-secondary)', cursor: 'pointer' }} />
+                </div>
+                
+                <button
+                  className="action-bar-btn"
+                  onClick={() => fetchMessages(activeFolder, true)}
+                  disabled={loadingList || syncingMailbox}
+                  title="Refresh"
+                >
+                  <RefreshCw size={16} className={syncingMailbox ? 'animate-spin' : ''} />
+                </button>
+
+                <button className="action-bar-btn" title="More">
+                  <MoreVertical size={16} />
+                </button>
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <span style={styles.paginationText}>
+                  {startRange}-{endRange} of {totalCount}
+                </span>
+                <div style={{ display: 'flex', gap: '4px' }}>
+                  <button
+                    className="pagination-btn"
+                    onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+                    disabled={currentPage === 1}
+                    title="Older"
+                  >
+                    <ChevronLeft size={16} />
+                  </button>
+                  <button
+                    className="pagination-btn"
+                    onClick={() => setCurrentPage(prev => prev + 1)}
+                    disabled={endRange >= totalCount}
+                    title="Newer"
+                  >
+                    <ChevronRight size={16} />
+                  </button>
+                </div>
+              </div>
+            </div>
+
             {loadingList && messages.length === 0 ? (
               <div style={styles.centerBox}>
                 <RefreshCw size={24} className="animate-spin" color="var(--color-primary)" />
@@ -339,23 +544,55 @@ export default function WebmailView({ user, onLogout, onNavigateToAdmin, onNavig
               </div>
             ) : (
               <div style={styles.messageListScroll}>
-                {messages.map((msg) => (
+                {paginatedMessages.map((msg) => (
                   <div
                     key={msg.id || `${msg.folder}-${msg.uid}`}
                     style={{
                       ...styles.msgCard,
                       backgroundColor: selectedMessage && selectedMessage.uid === msg.uid && selectedMessage.folder === msg.folder
-                        ? 'var(--bg-tertiary)' 
-                        : 'transparent',
-                      borderLeft: !msg.seen ? '3px solid var(--color-primary)' : '3px solid transparent',
+                        ? 'var(--color-primary-soft)' 
+                        : (!msg.seen ? '#f2f6fc' : '#ffffff'),
+                      borderBottom: '1px solid var(--bg-tertiary)',
                     }}
                     onClick={() => handleSelectMessage(msg)}
                   >
                     <div style={styles.msgHeader}>
-                      <span style={{
-                        ...styles.msgFrom,
-                        fontWeight: !msg.seen ? '700' : '500',
-                      }}>{msg.from_addr}</span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', overflow: 'hidden', width: '75%' }}>
+                        <input
+                          type="checkbox"
+                          checked={!!selectedUids[msg.uid]}
+                          onChange={(e) => toggleSelectRow(e, msg.uid)}
+                          style={styles.actionCheckbox}
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                        <button
+                          onClick={(e) => toggleStarRow(e, msg.uid)}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            color: starredUids[msg.uid] ? '#f1c40f' : 'var(--text-muted)',
+                            cursor: 'pointer',
+                            padding: 0,
+                            border: 'none',
+                            backgroundColor: 'transparent'
+                          }}
+                        >
+                          <Star size={16} fill={starredUids[msg.uid] ? '#f1c40f' : 'transparent'} />
+                        </button>
+                        {!msg.seen && (
+                          <div style={{
+                            width: '8px',
+                            height: '8px',
+                            borderRadius: '50%',
+                            backgroundColor: 'var(--color-primary)',
+                            flexShrink: 0
+                          }} />
+                        )}
+                        <span style={{
+                          ...styles.msgFrom,
+                          fontWeight: !msg.seen ? '700' : '500',
+                        }}>{msg.from_addr}</span>
+                      </div>
                       <span style={styles.msgDate}>{formatDate(msg.date)}</span>
                     </div>
                     <div style={{
@@ -364,13 +601,19 @@ export default function WebmailView({ user, onLogout, onNavigateToAdmin, onNavig
                     }}>{msg.subject || '(No Subject)'}</div>
                     <div style={styles.msgSnippet}>{msg.snippet}</div>
                     <div style={styles.msgActions}>
-                      <span style={styles.msgSize}>{formatSize(msg.size)}</span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        {msg.has_attachments && (
+                          <Paperclip size={14} style={{ color: 'var(--text-secondary)' }} title="Has attachments" />
+                        )}
+                        <span style={styles.msgSize}>{formatSize(msg.size)}</span>
+                      </div>
                       <button 
                         style={styles.deleteActionBtn} 
                         onClick={(e) => {
                           e.stopPropagation();
                           handleDeleteMessage(msg);
                         }}
+                        title="Delete email"
                       >
                         <Trash2 size={14} />
                       </button>
@@ -392,54 +635,196 @@ export default function WebmailView({ user, onLogout, onNavigateToAdmin, onNavig
                 <p style={{ marginTop: '10px', fontSize: '0.875rem' }}>Loading message content...</p>
               </div>
             ) : messageDetails ? (
-              <div style={styles.detailWrapper}>
-                <div style={styles.detailHeader}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                    <h2 style={styles.detailSubject}>{messageDetails.subject || '(No Subject)'}</h2>
-                    <div style={styles.detailHeaderActions}>
-                      <button style={styles.detailDeleteBtn} onClick={() => handleDeleteMessage(selectedMessage)}>
-                        <Trash2 size={16} style={{ marginRight: '6px' }} />
-                        <span>Delete</span>
-                      </button>
-                    </div>
-                  </div>
-                  
-                  <div style={styles.metaRow}>
-                    <div style={styles.metaLabel}>From:</div>
-                    <div style={styles.metaValue}>{messageDetails.from}</div>
-                  </div>
-                  <div style={styles.metaRow}>
-                    <div style={styles.metaLabel}>To:</div>
-                    <div style={styles.metaValue}>{messageDetails.to}</div>
-                  </div>
-                  <div style={styles.metaRow}>
-                    <div style={styles.metaLabel}>Date:</div>
-                    <div style={{ ...styles.metaValue, display: 'flex', alignItems: 'center' }}>
-                      <Calendar size={14} style={{ marginRight: '6px', color: 'var(--text-secondary)' }} />
-                      <span>{formatDate(messageDetails.date)}</span>
-                    </div>
-                  </div>
+              <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+                {/* Reader Action Toolbar */}
+                <div style={styles.detailToolbar}>
+                  <button 
+                    style={styles.toolbarBtn} 
+                    onClick={() => { setSelectedMessage(null); setMessageDetails(null); }}
+                    title="Back to list"
+                  >
+                    <ChevronLeft size={20} />
+                  </button>
+                  <div style={styles.toolbarDivider}></div>
+                  <button 
+                    style={styles.toolbarBtn} 
+                    onClick={() => handleDeleteMessage(selectedMessage)}
+                    title="Delete"
+                  >
+                    <Trash2 size={18} />
+                  </button>
+                  <div style={styles.toolbarDivider}></div>
+                  {/* Spam / Not Spam reporting buttons */}
+                  {activeFolder.toLowerCase() !== 'junk' && activeFolder.toLowerCase() !== 'spam' ? (
+                    <button
+                      style={{ ...styles.toolbarBtn, ...styles.spamBtn }}
+                      onClick={() => handleSpamReport(selectedMessage, 'spam')}
+                      disabled={spamReporting}
+                      title="Mark as Spam"
+                    >
+                      <ShieldOff size={17} />
+                      <span style={{ marginLeft: '5px', fontSize: '0.8rem' }}>Spam</span>
+                    </button>
+                  ) : (
+                    <button
+                      style={{ ...styles.toolbarBtn, ...styles.notSpamBtn }}
+                      onClick={() => handleSpamReport(selectedMessage, 'ham')}
+                      disabled={spamReporting}
+                      title="Not Spam"
+                    >
+                      <ShieldCheck size={17} />
+                      <span style={{ marginLeft: '5px', fontSize: '0.8rem' }}>Not Spam</span>
+                    </button>
+                  )}
                 </div>
 
-                {messageDetails.attachments && messageDetails.attachments.length > 0 && (
-                  <div style={styles.attachmentsContainer}>
-                    <div style={styles.attachmentsTitle}>
-                      <Paperclip size={14} style={{ marginRight: '6px' }} />
-                      <span>Attachments ({messageDetails.attachments.length})</span>
-                    </div>
-                    <div style={styles.attachmentsList}>
-                      {messageDetails.attachments.map((att, idx) => (
-                        <div key={idx} style={styles.attachmentItem}>
-                          <span style={styles.attachmentName}>{att.filename}</span>
-                          <span style={styles.attachmentSize}>({formatSize(att.size)})</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
+                <div style={styles.detailBodyContainer}>
+                  <h2 style={styles.detailSubject}>{messageDetails.subject || '(No Subject)'}</h2>
+                  
+                  <div style={styles.threadContainer}>
+                    {(messageDetails.thread || [messageDetails]).map((t, index) => {
+                      const isExpanded = expandedMessages[t.uid] || t.is_target;
+                      return (
+                        <div key={t.uid || index} style={styles.threadCard}>
+                          {/* Header row */}
+                          <div 
+                            style={styles.threadCardHeader}
+                            className="thread-card-header"
+                            onClick={() => setExpandedMessages(prev => ({ ...prev, [t.uid]: !prev[t.uid] }))}
+                          >
+                            {t.sender_avatar ? (
+                              <img 
+                                src={t.sender_avatar} 
+                                style={{
+                                  width: '40px',
+                                  height: '40px',
+                                  borderRadius: '50%',
+                                  objectFit: 'cover',
+                                  flexShrink: 0
+                                }} 
+                                alt="Sender Avatar" 
+                              />
+                            ) : (
+                              <div style={styles.senderAvatar}>
+                                {t.sender_name ? t.sender_name[0].toUpperCase() : 'M'}
+                              </div>
+                            )}
+                            {isExpanded ? (
+                              <div style={{ flex: 1, overflow: 'hidden' }}>
+                                <div style={styles.senderNameRow}>
+                                  <span style={styles.senderName}>
+                                    {t.sender_name || t.from}
+                                    <span style={styles.senderEmail}> &lt;{t.sender_email || t.from}&gt;</span>
+                                  </span>
+                                  <span style={styles.senderDate}>{formatDate(t.date)}</span>
+                                </div>
+                                <div style={styles.recipientRow}>
+                                  to {t.to}
+                                </div>
+                              </div>
+                            ) : (
+                              <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'space-between', overflow: 'hidden' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', overflow: 'hidden', flex: 1, marginRight: '16px' }}>
+                                  <span style={styles.senderName}>{t.sender_name || t.from}</span>
+                                  <span style={{
+                                    fontSize: '0.825rem',
+                                    color: 'var(--text-secondary)',
+                                    textOverflow: 'ellipsis',
+                                    whiteSpace: 'nowrap',
+                                    overflow: 'hidden',
+                                    flex: 1
+                                  }}>
+                                    {t.text ? t.text.trim().slice(0, 120) : '(No Content)'}
+                                  </span>
+                                </div>
+                                <span style={styles.senderDate}>{formatDate(t.date)}</span>
+                              </div>
+                            )}
+                          </div>
 
-                <div style={styles.messageBody}>
-                  {messageDetails.text}
+                          {/* Body content (visible only if expanded) */}
+                          {isExpanded && (
+                            <div style={styles.threadCardBody}>
+                              {t.attachments && t.attachments.length > 0 && (
+                                <div style={styles.attachmentsContainer}>
+                                  <div style={styles.attachmentsTitle}>
+                                    <Paperclip size={14} style={{ marginRight: '6px' }} />
+                                    <span>{t.attachments.length} Attachment{t.attachments.length > 1 ? 's' : ''}</span>
+                                  </div>
+                                  <div style={styles.attachmentsList}>
+                                    {t.attachments.map((att, idx) => (
+                                      <a
+                                        key={idx}
+                                        href={`/api/messages/${encodeURIComponent(t.folder)}/${t.uid}/attachments/${idx}/`}
+                                        download={att.filename}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        style={styles.attachmentItem}
+                                        onClick={(e) => e.stopPropagation()}
+                                      >
+                                        <Paperclip size={12} style={{ marginRight: '6px', flexShrink: 0 }} />
+                                        <span style={styles.attachmentName}>{att.filename}</span>
+                                        <span style={styles.attachmentSize}>({formatSize(att.size)})</span>
+                                      </a>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+
+                              <div style={styles.messageBody}>
+                                {t.html ? (
+                                  <iframe
+                                    title={`Email Body ${t.uid}`}
+                                    srcDoc={`
+                                      <html>
+                                        <head>
+                                          <base target="_blank">
+                                          <style>
+                                            body {
+                                              font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+                                              color: #202124;
+                                              line-height: 1.6;
+                                              margin: 0;
+                                              padding: 10px;
+                                              background-color: transparent;
+                                            }
+                                          </style>
+                                        </head>
+                                        <body>
+                                          ${t.html}
+                                        </body>
+                                      </html>
+                                    `}
+                                    style={{
+                                      width: '100%',
+                                      height: '250px',
+                                      border: 'none',
+                                      backgroundColor: 'transparent',
+                                    }}
+                                    sandbox="allow-popups allow-popups-to-escape-sandbox allow-same-origin"
+                                    onLoad={(e) => {
+                                      try {
+                                        const iframe = e.target;
+                                        if (iframe && iframe.contentWindow && iframe.contentWindow.document.body) {
+                                          iframe.style.height = (iframe.contentWindow.document.body.scrollHeight + 20) + 'px';
+                                        }
+                                      } catch (err) {
+                                        console.error(err);
+                                      }
+                                    }}
+                                  />
+                                ) : (
+                                  <div style={{ whiteSpace: 'pre-wrap' }}>
+                                    {t.text || '(No Content)'}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
               </div>
             ) : (
@@ -447,122 +832,111 @@ export default function WebmailView({ user, onLogout, onNavigateToAdmin, onNavig
                 <Mail size={36} color="var(--text-muted)" />
                 <p style={{ marginTop: '10px' }}>Select an email to view its content.</p>
               </div>
-            )}
+          )}
           </section>
         </div>
       </main>
 
-      {/* Compose Email Modal */}
+      {/* Floating Compose Widget */}
       {showCompose && (
-        <div style={styles.modalOverlay}>
-          <div style={styles.composeCard} className="animate-fade">
-            <div style={styles.composeCardHeader}>
-              <h3 style={styles.composeTitle}>New Message</h3>
-              <button style={styles.closeCompose} onClick={() => setShowCompose(false)}>
-                <X size={20} />
-              </button>
+        <div style={styles.composeWindow} className="animate-fade">
+          <div style={styles.composeWindowHeader}>
+            <span style={styles.composeTitle}>New Message</span>
+            <button style={styles.closeCompose} onClick={() => setShowCompose(false)}>
+              <X size={18} />
+            </button>
+          </div>
+
+          <form onSubmit={handleSend} style={styles.composeForm}>
+            <div style={styles.composeInputRow}>
+              <span style={styles.composeInputLabel}>To</span>
+              <input
+                type="text"
+                value={composeTo}
+                onChange={(e) => setComposeTo(e.target.value)}
+                style={styles.composeInput}
+                required
+              />
             </div>
 
-            <form onSubmit={handleSend} style={styles.composeForm}>
-              <div style={styles.formGroup}>
-                <label style={styles.formLabel}>To</label>
+            <div style={styles.composeInputRow}>
+              <span style={styles.composeInputLabel}>Cc</span>
+              <input
+                type="text"
+                value={composeCc}
+                onChange={(e) => setComposeCc(e.target.value)}
+                style={styles.composeInput}
+              />
+            </div>
+
+            <div style={styles.composeInputRow}>
+              <span style={styles.composeInputLabel}>Subject</span>
+              <input
+                type="text"
+                value={composeSubject}
+                onChange={(e) => setComposeSubject(e.target.value)}
+                style={styles.composeInput}
+              />
+            </div>
+
+            <div style={styles.composeBodyWrapper}>
+              <textarea
+                placeholder="Write your email here..."
+                value={composeBody}
+                onChange={(e) => setComposeBody(e.target.value)}
+                style={styles.composeTextarea}
+                required
+              />
+            </div>
+
+            {attachments.length > 0 && (
+              <div style={styles.composeFileList}>
+                {attachments.map((file, index) => (
+                  <div key={index} style={styles.composeFileItem}>
+                    <Paperclip size={12} style={{ marginRight: '6px' }} />
+                    <span style={{ flex: 1, textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>
+                       {file.name}
+                    </span>
+                    <button 
+                      type="button" 
+                      onClick={() => setAttachments(prev => prev.filter((_, i) => i !== index))}
+                      style={styles.removeFileBtn}
+                    >
+                      <X size={14} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div style={styles.composeFooter}>
+              <div style={{ display: 'flex', gap: '10px' }}>
+                <button 
+                  type="button" 
+                  style={styles.attachBtn} 
+                  onClick={() => fileInputRef.current.click()}
+                >
+                  <Paperclip size={18} style={{ marginRight: '6px' }} />
+                  <span>Attach Files</span>
+                </button>
                 <input
-                  type="text"
-                  placeholder="recipients@example.com (comma separated)"
-                  value={composeTo}
-                  onChange={(e) => setComposeTo(e.target.value)}
-                  style={styles.formInput}
-                  required
+                  type="file"
+                  multiple
+                  ref={fileInputRef}
+                  onChange={(e) => {
+                    if (e.target.files) {
+                      setAttachments(prev => [...prev, ...Array.from(e.target.files)]);
+                    }
+                  }}
+                  style={{ display: 'none' }}
                 />
               </div>
 
-              <div style={styles.formGroup}>
-                <label style={styles.formLabel}>Cc</label>
-                <input
-                  type="text"
-                  placeholder="carboncopy@example.com"
-                  value={composeCc}
-                  onChange={(e) => setComposeCc(e.target.value)}
-                  style={styles.formInput}
-                />
-              </div>
-
-              <div style={styles.formGroup}>
-                <label style={styles.formLabel}>Subject</label>
-                <input
-                  type="text"
-                  placeholder="Enter message subject"
-                  value={composeSubject}
-                  onChange={(e) => setComposeSubject(e.target.value)}
-                  style={styles.formInput}
-                />
-              </div>
-
-              <div style={{ ...styles.formGroup, flex: 1, display: 'flex', flexDirection: 'column' }}>
-                <label style={styles.formLabel}>Message Body</label>
-                <textarea
-                  placeholder="Write your email details here..."
-                  value={composeBody}
-                  onChange={(e) => setComposeBody(e.target.value)}
-                  style={styles.formTextarea}
-                  required
-                />
-              </div>
-
-              {attachments.length > 0 && (
-                <div style={styles.composeFileList}>
-                  {attachments.map((file, index) => (
-                    <div key={index} style={styles.composeFileItem}>
-                      <Paperclip size={12} style={{ marginRight: '6px' }} />
-                      <span style={{ flex: 1, textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>
-                        {file.name}
-                      </span>
-                      <button 
-                        type="button" 
-                        onClick={() => setAttachments(prev => prev.filter((_, i) => i !== index))}
-                        style={styles.removeFileBtn}
-                      >
-                        <X size={14} />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              <div style={styles.composeFooter}>
-                <div style={{ display: 'flex', gap: '10px' }}>
-                  <button 
-                    type="button" 
-                    style={styles.attachBtn} 
-                    onClick={() => fileInputRef.current.click()}
-                  >
-                    <Paperclip size={18} style={{ marginRight: '6px' }} />
-                    <span>Attach Files</span>
-                  </button>
-                  <input
-                    type="file"
-                    multiple
-                    ref={fileInputRef}
-                    onChange={(e) => {
-                      if (e.target.files) {
-                        setAttachments(prev => [...prev, ...Array.from(e.target.files)]);
-                      }
-                    }}
-                    style={{ display: 'none' }}
-                  />
-                </div>
-
-                <div style={{ display: 'flex', gap: '10px' }}>
-                  <button type="button" style={styles.cancelSendBtn} onClick={() => setShowCompose(false)}>
-                    Cancel
-                  </button>
-                  <button type="submit" style={styles.sendBtn} disabled={sending}>
-                    {sending ? <RefreshCw size={16} className="animate-spin" /> : 'Send Email'}
-                  </button>
-                </div>
-              </div>
-            </form>
-          </div>
+              <button type="submit" style={styles.sendBtn} disabled={sending}>
+                {sending ? <RefreshCw size={16} className="animate-spin" /> : 'Send'}
+              </button>
+            </div>
+          </form>
         </div>
       )}
     </div>
@@ -575,6 +949,7 @@ const styles = {
     height: '100vh',
     width: '100vw',
     backgroundColor: 'var(--bg-primary)',
+    color: 'var(--text-primary)',
   },
   sidebar: {
     width: '260px',
@@ -582,13 +957,14 @@ const styles = {
     borderRight: '1px solid var(--glass-border)',
     display: 'flex',
     flexDirection: 'column',
-    padding: '1.5rem 1rem',
+    padding: '1.5rem 0 1.5rem 0',
   },
   sidebarHeader: {
     display: 'flex',
     alignItems: 'center',
     gap: '12px',
-    marginBottom: '2rem',
+    padding: '0 1.5rem',
+    marginBottom: '1.5rem',
   },
   logoContainer: {
     display: 'flex',
@@ -598,37 +974,41 @@ const styles = {
     height: '40px',
     borderRadius: 'var(--radius-md)',
     backgroundColor: 'var(--color-primary-soft)',
-    border: '1px solid rgba(99, 102, 241, 0.2)',
+    border: '1px solid rgba(26, 115, 232, 0.2)',
   },
   logoText: {
     fontFamily: 'var(--font-display)',
     fontWeight: '800',
     fontSize: '1.25rem',
-    color: '#ffffff',
+    color: 'var(--text-primary)',
   },
   activeMailbox: {
     fontSize: '0.75rem',
     color: 'var(--text-secondary)',
     textOverflow: 'ellipsis',
     overflow: 'hidden',
-    maxWidth: '180px',
+    maxWidth: '160px',
     whiteSpace: 'nowrap',
   },
   composeBtn: {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    padding: '0.75rem',
-    backgroundColor: 'var(--color-primary)',
-    color: '#ffffff',
-    borderRadius: 'var(--radius-md)',
-    fontWeight: '600',
+    padding: '0.75rem 1.5rem',
+    backgroundColor: '#ffffff',
+    color: 'var(--color-primary)',
+    borderRadius: '24px',
+    fontWeight: '700',
     fontSize: '0.95rem',
-    boxShadow: 'var(--shadow-primary)',
-    marginBottom: '1.5rem',
-    transition: 'background-color var(--transition-fast)',
+    border: '1px solid var(--glass-border)',
+    boxShadow: '0 1px 2px 0 rgba(60, 64, 67, 0.3), 0 1px 3px 1px rgba(60, 64, 67, 0.15)',
+    margin: '0 1.5rem 1.5rem 1.5rem',
+    transition: 'all var(--transition-fast)',
+    width: 'fit-content',
+    gap: '8px',
+    cursor: 'pointer',
     ':hover': {
-      backgroundColor: 'var(--color-primary-hover)',
+      boxShadow: '0 1px 3px 0 rgba(60, 64, 67, 0.3), 0 4px 8px 3px rgba(60, 64, 67, 0.15)',
     },
   },
   nav: {
@@ -643,7 +1023,7 @@ const styles = {
     color: 'var(--text-muted)',
     textTransform: 'uppercase',
     letterSpacing: '1px',
-    margin: '1rem 0 0.5rem 0.75rem',
+    margin: '1rem 0 0.5rem 1.5rem',
   },
   folderList: {
     listStyle: 'none',
@@ -655,47 +1035,43 @@ const styles = {
     width: '100%',
     display: 'flex',
     alignItems: 'center',
-    padding: '0.6rem 0.75rem',
-    borderRadius: 'var(--radius-md)',
+    padding: '0.5rem 1rem 0.5rem 1.5rem',
+    borderRadius: '0 16px 16px 0',
     fontSize: '0.9rem',
     transition: 'all var(--transition-fast)',
     textAlign: 'left',
+    border: 'none',
+    cursor: 'pointer',
   },
   adminLink: {
-    width: '100%',
+    width: 'calc(100% - 1.5rem)',
     display: 'flex',
     alignItems: 'center',
-    padding: '0.6rem 0.75rem',
-    borderRadius: 'var(--radius-md)',
+    padding: '0.6rem 0.75rem 0.6rem 1.5rem',
+    borderRadius: '0 16px 16px 0',
     color: 'var(--color-warning)',
     backgroundColor: 'var(--color-warning-soft)',
-    border: '1px solid rgba(245, 158, 11, 0.1)',
+    border: 'none',
     fontSize: '0.9rem',
     fontWeight: '600',
     textAlign: 'left',
     transition: 'opacity var(--transition-fast)',
-    ':hover': {
-      opacity: 0.9,
-    },
+    cursor: 'pointer',
   },
   tenantLink: {
-    width: '100%',
+    width: 'calc(100% - 1.5rem)',
     display: 'flex',
     alignItems: 'center',
-    padding: '0.6rem 0.75rem',
-    borderRadius: 'var(--radius-md)',
-    color: '#818cf8',
-    backgroundColor: 'rgba(99, 102, 241, 0.08)',
-    border: '1px solid rgba(99, 102, 241, 0.1)',
+    padding: '0.6rem 0.75rem 0.6rem 1.5rem',
+    borderRadius: '0 16px 16px 0',
+    color: 'var(--color-primary)',
+    backgroundColor: 'var(--color-primary-soft)',
+    border: 'none',
     fontSize: '0.9rem',
     fontWeight: '600',
     textAlign: 'left',
     cursor: 'pointer',
     transition: 'opacity var(--transition-fast)',
-    marginTop: '8px',
-    ':hover': {
-      opacity: 0.9,
-    },
   },
   sidebarFooter: {
     marginTop: 'auto',
@@ -704,11 +1080,12 @@ const styles = {
     display: 'flex',
     flexDirection: 'column',
     gap: '0.75rem',
+    paddingLeft: '1.5rem',
+    paddingRight: '1.5rem',
   },
   userInfo: {
     display: 'flex',
     alignItems: 'center',
-    padding: '0 0.5rem',
   },
   username: {
     fontSize: '0.85rem',
@@ -727,6 +1104,9 @@ const styles = {
     borderRadius: 'var(--radius-md)',
     fontSize: '0.85rem',
     fontWeight: '600',
+    cursor: 'pointer',
+    width: '100%',
+    justifyContent: 'center',
   },
   mainContent: {
     flex: 1,
@@ -741,45 +1121,51 @@ const styles = {
     alignItems: 'center',
     justifyContent: 'space-between',
     padding: '0 1.5rem',
-    backgroundColor: 'var(--bg-secondary)',
+    backgroundColor: 'var(--bg-primary)',
   },
   searchForm: {
     position: 'relative',
     display: 'flex',
     alignItems: 'center',
     width: '100%',
-    maxWidth: '450px',
+    maxWidth: '600px',
   },
   searchIcon: {
     position: 'absolute',
-    left: '12px',
+    left: '16px',
     color: 'var(--text-secondary)',
   },
   searchInput: {
     width: '100%',
-    padding: '0.5rem 2.5rem 0.5rem 40px',
-    backgroundColor: 'var(--bg-primary)',
-    border: '1px solid var(--glass-border)',
-    borderRadius: 'var(--radius-md)',
-    color: '#ffffff',
-    fontSize: '0.9rem',
+    padding: '0.6rem 2.5rem 0.6rem 48px',
+    backgroundColor: 'var(--bg-tertiary)',
+    border: 'none',
+    borderRadius: '24px',
+    color: 'var(--text-primary)',
+    fontSize: '0.95rem',
+    transition: 'background-color var(--transition-fast), box-shadow var(--transition-fast)',
   },
   clearSearch: {
     position: 'absolute',
-    right: '12px',
+    right: '16px',
     color: 'var(--text-secondary)',
+    cursor: 'pointer',
   },
   refreshBtn: {
     padding: '0.5rem',
-    borderRadius: 'var(--radius-md)',
-    border: '1px solid var(--glass-border)',
+    borderRadius: '50%',
+    border: 'none',
     color: 'var(--text-secondary)',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'var(--bg-primary)',
+    backgroundColor: 'transparent',
+    cursor: 'pointer',
+    width: '40px',
+    height: '40px',
+    transition: 'background-color var(--transition-fast)',
     ':hover': {
-      color: '#ffffff',
+      backgroundColor: 'var(--bg-tertiary)',
     },
   },
   splitView: {
@@ -793,6 +1179,7 @@ const styles = {
     flexDirection: 'column',
     overflowY: 'auto',
     transition: 'width var(--transition-normal)',
+    backgroundColor: 'var(--bg-primary)',
   },
   messageListScroll: {
     display: 'flex',
@@ -806,19 +1193,25 @@ const styles = {
     padding: '4rem 2rem',
     textAlign: 'center',
     color: 'var(--text-secondary)',
+    flex: 1,
   },
   msgCard: {
-    padding: '1.25rem',
-    borderBottom: '1px solid var(--glass-border)',
+    padding: '1rem 1.5rem',
+    borderBottom: '1px solid var(--bg-tertiary)',
     cursor: 'pointer',
     transition: 'all var(--transition-fast)',
     display: 'flex',
     flexDirection: 'column',
-    gap: '0.35rem',
+    gap: '0.3rem',
+    position: 'relative',
+    ':hover': {
+      backgroundColor: 'var(--bg-secondary)',
+    },
   },
   msgHeader: {
     display: 'flex',
     justifyContent: 'space-between',
+    alignItems: 'center',
     fontSize: '0.8rem',
   },
   msgFrom: {
@@ -826,14 +1219,14 @@ const styles = {
     textOverflow: 'ellipsis',
     whiteSpace: 'nowrap',
     overflow: 'hidden',
-    maxWidth: '75%',
   },
   msgDate: {
     color: 'var(--text-secondary)',
+    fontSize: '0.75rem',
   },
   msgSubject: {
-    color: '#ffffff',
-    fontSize: '0.9rem',
+    color: 'var(--text-primary)',
+    fontSize: '0.875rem',
     textOverflow: 'ellipsis',
     whiteSpace: 'nowrap',
     overflow: 'hidden',
@@ -841,17 +1234,16 @@ const styles = {
   msgSnippet: {
     fontSize: '0.825rem',
     color: 'var(--text-secondary)',
-    display: '-webkit-box',
-    WebkitLineClamp: 2,
-    WebkitBoxOrient: 'vertical',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
     overflow: 'hidden',
-    lineHeight: '1.35',
+    maxWidth: '100%',
   },
   msgActions: {
     display: 'flex',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginTop: '0.25rem',
+    marginTop: '0.2rem',
   },
   msgSize: {
     fontSize: '0.75rem',
@@ -859,6 +1251,9 @@ const styles = {
   },
   deleteActionBtn: {
     color: 'var(--text-muted)',
+    cursor: 'pointer',
+    border: 'none',
+    backgroundColor: 'transparent',
     ':hover': {
       color: 'var(--color-danger)',
     },
@@ -866,58 +1261,106 @@ const styles = {
   detailPane: {
     flex: 1,
     flexDirection: 'column',
-    backgroundColor: 'var(--bg-secondary)',
+    backgroundColor: 'var(--bg-primary)',
     overflowY: 'auto',
   },
-  detailWrapper: {
-    padding: '2rem',
+  detailToolbar: {
+    display: 'flex',
+    alignItems: 'center',
+    height: '48px',
+    padding: '0 1.5rem',
+    borderBottom: '1px solid var(--glass-border)',
+    backgroundColor: 'var(--bg-primary)',
+    gap: '12px',
+  },
+  toolbarBtn: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '32px',
+    height: '32px',
+    borderRadius: '50%',
+    border: 'none',
+    backgroundColor: 'transparent',
+    color: 'var(--text-secondary)',
+    cursor: 'pointer',
+    transition: 'background-color var(--transition-fast)',
+    ':hover': {
+      backgroundColor: 'var(--bg-tertiary)',
+      color: 'var(--text-primary)',
+    },
+  },
+  toolbarDivider: {
+    width: '1px',
+    height: '20px',
+    backgroundColor: 'var(--glass-border)',
+  },
+  spamBtn: {
+    width: 'auto',
+    borderRadius: '16px',
+    padding: '0 12px',
+    color: '#d93025',
+    backgroundColor: 'rgba(217,48,37,0.07)',
+    border: '1px solid rgba(217,48,37,0.2)',
+  },
+  notSpamBtn: {
+    width: 'auto',
+    borderRadius: '16px',
+    padding: '0 12px',
+    color: '#1e8e3e',
+    backgroundColor: 'rgba(30,142,62,0.07)',
+    border: '1px solid rgba(30,142,62,0.2)',
+  },
+  detailBodyContainer: {
+    padding: '1.5rem 2rem',
     display: 'flex',
     flexDirection: 'column',
     gap: '1.5rem',
-  },
-  detailHeader: {
-    borderBottom: '1px solid var(--glass-border)',
-    paddingBottom: '1.5rem',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '0.75rem',
+    overflowY: 'auto',
   },
   detailSubject: {
     fontFamily: 'var(--font-display)',
-    fontSize: '1.5rem',
+    fontSize: '1.35rem',
     fontWeight: '700',
-    color: '#ffffff',
-    marginRight: '1rem',
+    color: 'var(--text-primary)',
   },
-  detailHeaderActions: {
-    display: 'flex',
-    gap: '10px',
-  },
-  detailDeleteBtn: {
+  senderHeader: {
     display: 'flex',
     alignItems: 'center',
-    padding: '0.5rem 0.75rem',
-    backgroundColor: 'var(--color-danger-soft)',
-    color: 'var(--color-danger)',
-    borderRadius: 'var(--radius-md)',
-    fontSize: '0.85rem',
-    fontWeight: '600',
+    gap: '12px',
   },
-  metaRow: {
+  senderAvatar: {
+    width: '40px',
+    height: '40px',
+    borderRadius: '50%',
+    backgroundColor: '#e8f0fe',
+    color: 'var(--color-primary)',
     display: 'flex',
-    fontSize: '0.875rem',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontWeight: '700',
+    fontSize: '1.1rem',
   },
-  metaLabel: {
-    width: '60px',
-    color: 'var(--text-secondary)',
-    fontWeight: '500',
+  senderNameRow: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
   },
-  metaValue: {
+  senderName: {
+    fontWeight: '700',
+    fontSize: '0.9rem',
     color: 'var(--text-primary)',
-    fontWeight: '500',
+  },
+  senderDate: {
+    fontSize: '0.75rem',
+    color: 'var(--text-secondary)',
+  },
+  recipientRow: {
+    fontSize: '0.8rem',
+    color: 'var(--text-secondary)',
   },
   attachmentsContainer: {
-    backgroundColor: 'rgba(0, 0, 0, 0.15)',
+    backgroundColor: 'var(--bg-secondary)',
     borderRadius: 'var(--radius-md)',
     padding: '1rem',
     border: '1px solid var(--glass-border)',
@@ -938,123 +1381,119 @@ const styles = {
   attachmentItem: {
     display: 'flex',
     alignItems: 'center',
-    padding: '0.5rem 0.75rem',
-    backgroundColor: 'var(--bg-tertiary)',
-    borderRadius: 'var(--radius-sm)',
+    padding: '6px 12px',
+    backgroundColor: '#ffffff',
+    borderRadius: '20px',
     fontSize: '0.8rem',
-    color: 'var(--text-secondary)',
+    color: 'var(--color-primary)',
     border: '1px solid var(--glass-border)',
+    cursor: 'pointer',
+    textDecoration: 'none',
+    transition: 'all var(--transition-fast)',
+    boxShadow: '0 1px 2px rgba(60,64,67,0.08)',
+    gap: '4px',
   },
   attachmentName: {
     color: 'var(--text-primary)',
     marginRight: '6px',
-    fontWeight: '500',
+    fontWeight: '600',
   },
   attachmentSize: {
     fontSize: '0.75rem',
   },
   messageBody: {
-    whiteSpace: 'pre-wrap',
     fontSize: '0.95rem',
     lineHeight: '1.6',
-    color: '#d1d5db',
-    fontFamily: 'var(--font-sans)',
+    color: 'var(--text-primary)',
   },
-  modalOverlay: {
+  composeWindow: {
     position: 'fixed',
-    top: 0,
-    left: 0,
-    right: 0,
     bottom: 0,
-    backgroundColor: 'rgba(5, 5, 10, 0.8)',
-    backdropFilter: 'blur(8px)',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    zIndex: 1000,
-  },
-  composeCard: {
-    width: '100%',
-    maxWidth: '650px',
-    height: '80vh',
-    backgroundColor: 'var(--bg-secondary)',
-    borderRadius: 'var(--radius-lg)',
+    right: '80px',
+    width: '540px',
+    height: '500px',
+    backgroundColor: '#ffffff',
     border: '1px solid var(--glass-border)',
+    borderRadius: '8px 8px 0 0',
+    boxShadow: '0 8px 10px 1px rgba(0,0,0,0.14), 0 3px 14px 2px rgba(0,0,0,0.12), 0 5px 5px -3px rgba(0,0,0,0.2)',
     display: 'flex',
     flexDirection: 'column',
-    boxShadow: 'var(--shadow-lg)',
+    zIndex: 1000,
     overflow: 'hidden',
   },
-  composeCardHeader: {
-    padding: '1.25rem 1.5rem',
-    borderBottom: '1px solid var(--glass-border)',
+  composeWindowHeader: {
+    padding: '10px 16px',
+    backgroundColor: '#f2f6fc',
+    color: 'var(--text-primary)',
     display: 'flex',
     justifyContent: 'space-between',
     alignItems: 'center',
-    backgroundColor: 'rgba(0,0,0,0.1)',
+    borderBottom: '1px solid var(--glass-border)',
   },
   composeTitle: {
-    fontFamily: 'var(--font-display)',
     fontWeight: '700',
-    fontSize: '1.1rem',
+    fontSize: '0.875rem',
   },
   closeCompose: {
     color: 'var(--text-secondary)',
-    ':hover': { color: '#ffffff' },
+    cursor: 'pointer',
   },
   composeForm: {
     flex: 1,
-    padding: '1.5rem',
     display: 'flex',
     flexDirection: 'column',
-    gap: '1rem',
+    padding: '0 16px 16px 16px',
     overflowY: 'auto',
   },
-  formGroup: {
+  composeInputRow: {
     display: 'flex',
-    flexDirection: 'column',
-    gap: '0.4rem',
+    alignItems: 'center',
+    borderBottom: '1px solid #f1f3f4',
+    padding: '8px 0',
+    gap: '8px',
   },
-  formLabel: {
-    fontSize: '0.75rem',
-    fontWeight: '700',
+  composeInputLabel: {
+    fontSize: '0.85rem',
     color: 'var(--text-secondary)',
-    textTransform: 'uppercase',
-    letterSpacing: '0.5px',
+    width: '50px',
   },
-  formInput: {
-    padding: '0.6rem 0.75rem',
-    backgroundColor: 'rgba(0, 0, 0, 0.2)',
-    border: '1px solid var(--glass-border)',
-    borderRadius: 'var(--radius-md)',
-    fontSize: '0.9rem',
-  },
-  formTextarea: {
+  composeInput: {
     flex: 1,
-    minHeight: '200px',
-    padding: '0.75rem',
-    backgroundColor: 'rgba(0, 0, 0, 0.2)',
-    border: '1px solid var(--glass-border)',
-    borderRadius: 'var(--radius-md)',
-    fontSize: '0.95rem',
+    border: 'none',
+    fontSize: '0.9rem',
+    color: 'var(--text-primary)',
+    backgroundColor: 'transparent',
+  },
+  composeBodyWrapper: {
+    flex: 1,
+    padding: '12px 0',
+    display: 'flex',
+  },
+  composeTextarea: {
+    flex: 1,
+    border: 'none',
     resize: 'none',
+    fontSize: '0.95rem',
     lineHeight: '1.5',
+    color: 'var(--text-primary)',
+    backgroundColor: 'transparent',
   },
   composeFileList: {
     display: 'flex',
     flexWrap: 'wrap',
     gap: '8px',
-    padding: '0.5rem',
-    backgroundColor: 'rgba(0,0,0,0.15)',
-    borderRadius: 'var(--radius-md)',
+    padding: '8px',
+    backgroundColor: 'var(--bg-secondary)',
+    borderRadius: '4px',
     border: '1px solid var(--glass-border)',
+    marginBottom: '8px',
   },
   composeFileItem: {
     display: 'flex',
     alignItems: 'center',
-    padding: '0.35rem 0.6rem',
-    backgroundColor: 'var(--bg-tertiary)',
-    borderRadius: 'var(--radius-sm)',
+    padding: '4px 8px',
+    backgroundColor: '#ffffff',
+    borderRadius: '4px',
     fontSize: '0.75rem',
     color: 'var(--text-secondary)',
     maxWidth: '220px',
@@ -1062,12 +1501,11 @@ const styles = {
   removeFileBtn: {
     marginLeft: '6px',
     color: 'var(--text-muted)',
-    ':hover': { color: 'var(--color-danger)' },
+    cursor: 'pointer',
   },
   composeFooter: {
-    marginTop: 'auto',
-    paddingTop: '1rem',
-    borderTop: '1px solid var(--glass-border)',
+    borderTop: '1px solid #f1f3f4',
+    paddingTop: '12px',
     display: 'flex',
     justifyContent: 'space-between',
     alignItems: 'center',
@@ -1075,29 +1513,83 @@ const styles = {
   attachBtn: {
     display: 'flex',
     alignItems: 'center',
-    padding: '0.6rem 1rem',
+    padding: '8px 16px',
     border: '1px solid var(--glass-border)',
     color: 'var(--text-secondary)',
-    borderRadius: 'var(--radius-md)',
-    fontSize: '0.9rem',
-    fontWeight: '500',
-    ':hover': {
-      borderColor: 'var(--color-primary)',
-      color: '#ffffff',
-    },
+    borderRadius: '16px',
+    fontSize: '0.85rem',
+    fontWeight: '600',
+    cursor: 'pointer',
   },
   sendBtn: {
-    padding: '0.6rem 1.25rem',
+    padding: '8px 24px',
     backgroundColor: 'var(--color-primary)',
     color: '#ffffff',
-    borderRadius: 'var(--radius-md)',
-    fontSize: '0.9rem',
-    fontWeight: '600',
-    boxShadow: 'var(--shadow-primary)',
+    borderRadius: '18px',
+    fontSize: '0.875rem',
+    fontWeight: '700',
+    cursor: 'pointer',
+    boxShadow: '0 1px 2px 0 rgba(60,64,67,0.3), 0 1px 3px 1px rgba(60,64,67,0.15)',
   },
-  cancelSendBtn: {
-    padding: '0.6rem 1rem',
+  threadContainer: {
+    display: 'flex',
+    flexDirection: 'column',
+    marginTop: '1rem',
+  },
+  threadCard: {
+    borderBottom: '1px solid var(--glass-border)',
+    backgroundColor: '#ffffff',
+    padding: '16px 0',
+  },
+  threadCardHeader: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '12px',
+    padding: '12px 16px',
+    cursor: 'pointer',
+    backgroundColor: 'transparent',
+    userSelect: 'none',
+    transition: 'background-color var(--transition-fast)',
+    borderRadius: '4px',
+  },
+  threadCardBody: {
+    padding: '16px 16px 16px 52px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '12px',
+  },
+  senderEmail: {
+    fontSize: '0.8rem',
     color: 'var(--text-secondary)',
-    fontSize: '0.9rem',
+    fontWeight: '400',
+    marginLeft: '6px',
+  },
+  threadSnippet: {
+    fontSize: '0.8rem',
+    color: 'var(--text-muted)',
+    marginTop: '4px',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+    overflow: 'hidden',
+  },
+  listActionBar: {
+    height: '48px',
+    borderBottom: '1px solid var(--glass-border)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: '0 1rem',
+    backgroundColor: '#ffffff',
+    flexShrink: 0,
+  },
+  actionCheckbox: {
+    cursor: 'pointer',
+    margin: 0,
+    width: '14px',
+    height: '14px',
+  },
+  paginationText: {
+    fontSize: '0.75rem',
+    color: 'var(--text-secondary)',
   },
 };

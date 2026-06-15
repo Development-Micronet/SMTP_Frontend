@@ -44,7 +44,7 @@ export default function SignupView({ onSignupSuccess, onBackToLogin }) {
       <div style={styles.glassCard} className="animate-fade">
         <div style={styles.header}>
           <div style={styles.logoContainer}>
-            <Mail size={32} color="#6366f1" />
+            <Mail size={32} color="var(--color-primary)" />
           </div>
           <h1 style={styles.title}>Create Account</h1>
           <p style={styles.subtitle}>Get your custom self-hosted mail workspace live</p>
@@ -145,18 +145,17 @@ const styles = {
     justifyContent: 'center',
     height: '100vh',
     width: '100vw',
-    backgroundColor: 'var(--bg-primary)',
-    backgroundImage: 'radial-gradient(circle at 50% -20%, #1e1b4b, transparent 60%)',
+    backgroundColor: 'var(--bg-secondary)',
+    backgroundImage: 'radial-gradient(circle at 50% -20%, #e8f0fe, transparent 75%)',
   },
   glassCard: {
     width: '100%',
     maxWidth: '420px',
     padding: '2.5rem',
     borderRadius: 'var(--radius-lg)',
-    backgroundColor: 'var(--glass-bg)',
-    backdropFilter: 'blur(16px)',
+    backgroundColor: 'var(--bg-primary)',
     border: '1px solid var(--glass-border)',
-    boxShadow: 'var(--shadow-lg)',
+    boxShadow: '0 4px 24px rgba(0, 0, 0, 0.08)',
   },
   header: {
     textAlign: 'center',
@@ -171,7 +170,7 @@ const styles = {
     borderRadius: 'var(--radius-md)',
     backgroundColor: 'var(--color-primary-soft)',
     marginBottom: '1rem',
-    border: '1px solid rgba(99, 102, 241, 0.2)',
+    border: '1px solid rgba(26, 115, 232, 0.2)',
   },
   title: {
     fontFamily: 'var(--font-display)',
@@ -226,15 +225,12 @@ const styles = {
   input: {
     width: '100%',
     padding: '0.75rem 1rem 0.75rem 40px',
-    backgroundColor: 'rgba(0, 0, 0, 0.2)',
+    backgroundColor: 'var(--bg-primary)',
     border: '1px solid var(--glass-border)',
     borderRadius: 'var(--radius-md)',
     color: 'var(--text-primary)',
     fontSize: '0.95rem',
-    transition: 'border-color var(--transition-fast)',
-    ':focus': {
-      borderColor: 'var(--color-primary)',
-    },
+    transition: 'border-color var(--transition-fast), box-shadow var(--transition-fast)',
   },
   submitBtn: {
     display: 'flex',
@@ -247,7 +243,7 @@ const styles = {
     fontSize: '0.95rem',
     fontWeight: '600',
     marginTop: '0.5rem',
-    boxShadow: 'var(--shadow-primary)',
+    boxShadow: '0 2px 4px rgba(26, 115, 232, 0.2)',
     transition: 'background-color var(--transition-fast)',
   },
   spinner: {
@@ -260,7 +256,7 @@ const styles = {
     color: 'var(--text-secondary)',
   },
   link: {
-    color: '#6366f1',
+    color: 'var(--color-primary)',
     cursor: 'pointer',
     fontWeight: '600',
     textDecoration: 'underline',

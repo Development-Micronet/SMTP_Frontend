@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { 
   Building, Globe, Mail, Link as LinkIcon, ShieldCheck, 
-  CreditCard, Info, Plus, Trash2, CheckCircle2, XCircle, 
+  Info, Plus, Trash2, CheckCircle2, XCircle, 
   RefreshCw, LogOut, ArrowLeft, Key, ChevronRight, AlertTriangle
 } from 'lucide-react';
 import { request } from '../api/client';
@@ -77,7 +77,7 @@ export default function TenantDashboardView({ onBackToWebmail, onLogout }) {
     try {
       const res = await request('/api/tenant/domains/', {
         method: 'POST',
-        body: JSON.stringify({ name: newDomainName.trim().lowerCase || newDomainName.trim() }),
+        body: JSON.stringify({ name: newDomainName.toLowerCase().trim() }),
       });
       setDomains([res, ...domains]);
       setNewDomainName('');
@@ -245,30 +245,10 @@ export default function TenantDashboardView({ onBackToWebmail, onLogout }) {
     }
   };
 
-  const handleUpgradeTier = async (tier) => {
-    setError('');
-    setSuccess('');
-    try {
-      const res = await request('/api/billing/checkout/', {
-        method: 'POST',
-        body: JSON.stringify({ tier }),
-      });
-      if (res.mock) {
-        setSuccess(res.message);
-        // Refresh pricing stats
-        fetchInitialData();
-      } else if (res.url) {
-        window.location.href = res.url;
-      }
-    } catch (err) {
-      setError(err.message || 'Failed to redirect to billing.');
-    }
-  };
-
   if (loading) {
     return (
       <div style={styles.loadingContainer}>
-        <RefreshCw size={36} className="animate-spin" color="#6366f1" />
+        <RefreshCw size={36} className="animate-spin" color="var(--color-primary)" />
         <p style={{ marginTop: '15px', color: 'var(--text-secondary)' }}>Loading Workspace Settings...</p>
       </div>
     );
@@ -286,9 +266,9 @@ export default function TenantDashboardView({ onBackToWebmail, onLogout }) {
             Back to Webmail
           </button>
           <div style={styles.workspaceBrand}>
-            <Building size={20} color="#6366f1" />
+            <Building size={20} color="var(--color-primary)" />
             <span style={styles.workspaceName}>{org?.name}</span>
-            <span style={{...styles.tierBadge, ...styles[org?.tier]}}>{org?.tier?.toUpperCase()}</span>
+            <span style={{...styles.tierBadge, ...styles.proBadge}}>INTERNAL USE ONLY</span>
           </div>
         </div>
         <div style={styles.headerRight}>
@@ -328,8 +308,8 @@ export default function TenantDashboardView({ onBackToWebmail, onLogout }) {
             onClick={() => { setActiveTab('billing'); setSuccess(''); setError(''); }}
             style={activeTab === 'billing' ? styles.navActive : styles.navInactive}
           >
-            <CreditCard size={18} />
-            <span>Workspace & Billing</span>
+            <Info size={18} />
+            <span>Workspace Info</span>
           </button>
         </nav>
 
@@ -440,19 +420,19 @@ export default function TenantDashboardView({ onBackToWebmail, onLogout }) {
                       {/* DNS Copy-Paste Block */}
                       <div style={styles.dnsBox}>
                         <h4 style={styles.dnsBoxTitle}>1. Ownership Verification (Required)</h4>
-                        <p style={styles.dnsBoxText}>Create the following TXT record on your DNS registrar (GoDaddy, Cloudflare, Route53) to verify domain ownership:</p>
+                        <p style={styles.dnsBoxText}>Create the following TXT record on your DNS registrar to verify domain ownership:</p>
                         <div style={styles.dnsCodeCard}>
                           <div><strong>Type:</strong> <code style={styles.code}>TXT</code></div>
                           <div><strong>Name / Host:</strong> <code style={styles.code}>@</code> (or blank)</div>
                           <div><strong>TXT Value:</strong> <code style={styles.code}>mailstack-verification={selectedDomain.verification_token}</code></div>
                         </div>
 
-                        <h4 style={styles.dnsBoxTitle} style={{ marginTop: '1.5rem' }}>2. MX Routing Records (Required for Inbound)</h4>
-                        <p style={styles.dnsBoxText}>Configure MX records to route incoming emails to our MailStack server:</p>
+                        <h4 style={{ ...styles.dnsBoxTitle, marginTop: '1.5rem' }}>2. MX Routing Records (Required for Inbound)</h4>
+                        <p style={styles.dnsBoxText}>Configure MX records to route incoming emails to our server:</p>
                         <div style={styles.dnsCodeCard}>
                           <div><strong>Type:</strong> <code style={styles.code}>MX</code></div>
                           <div><strong>Name / Host:</strong> <code style={styles.code}>@</code></div>
-                          <div><strong>Destination:</strong> <code style={styles.code}>mail.yourdomain.com</code> (Priority 10)</div>
+                          <div><strong>Destination:</strong> <code style={styles.code}>mail.acetechnologys.com</code> (Priority 10)</div>
                         </div>
                       </div>
 
@@ -518,11 +498,6 @@ export default function TenantDashboardView({ onBackToWebmail, onLogout }) {
                       <AlertTriangle size={18} style={{ marginRight: '8px' }} />
                       You must add and verify a custom domain before creating mailboxes.
                     </div>
-                  ) : mailboxes.length >= limits?.mailboxes ? (
-                    <div style={styles.formWarning}>
-                      <AlertTriangle size={18} style={{ marginRight: '8px' }} />
-                      Mailbox limit reached for your plan ({limits?.mailboxes}). Upgrade to add more.
-                    </div>
                   ) : (
                     <form onSubmit={handleCreateMailbox} style={styles.verticalForm}>
                       <div style={styles.inputGroup}>
@@ -572,8 +547,10 @@ export default function TenantDashboardView({ onBackToWebmail, onLogout }) {
                         >
                           <option value={512}>512 MB</option>
                           <option value={1024}>1 GB (1024 MB)</option>
-                          {limits?.quota_mb >= 5120 && <option value={5120}>5 GB</option>}
-                          {limits?.quota_mb >= 20480 && <option value={20480}>20 GB</option>}
+                          <option value={2048}>2 GB (2048 MB)</option>
+                          <option value={5120}>5 GB (5120 MB)</option>
+                          <option value={10240}>10 GB (10240 MB)</option>
+                          <option value={20480}>20 GB (20480 MB)</option>
                         </select>
                       </div>
 
@@ -604,7 +581,7 @@ export default function TenantDashboardView({ onBackToWebmail, onLogout }) {
                             <th style={styles.th}>Address</th>
                             <th style={styles.th}>Quota</th>
                             <th style={styles.th}>Created</th>
-                            <th style={styles.th} style={{ textAlign: 'right' }}>Actions</th>
+                            <th style={{ ...styles.th, textAlign: 'right' }}>Actions</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -619,7 +596,7 @@ export default function TenantDashboardView({ onBackToWebmail, onLogout }) {
                               <td style={styles.td}>
                                 <span>{new Date(mb.created_at).toLocaleDateString()}</span>
                               </td>
-                              <td style={styles.td} style={{ textAlign: 'right' }}>
+                              <td style={{ ...styles.td, textAlign: 'right' }}>
                                 <button 
                                   onClick={() => handleDeleteMailbox(mb.id, mb.address)}
                                   style={styles.deleteActionBtn}
@@ -713,7 +690,7 @@ export default function TenantDashboardView({ onBackToWebmail, onLogout }) {
                           <tr style={styles.trHead}>
                             <th style={styles.th}>Alias (Source)</th>
                             <th style={styles.th}>Forward Destination</th>
-                            <th style={styles.th} style={{ textAlign: 'right' }}>Actions</th>
+                            <th style={{ ...styles.th, textAlign: 'right' }}>Actions</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -725,7 +702,7 @@ export default function TenantDashboardView({ onBackToWebmail, onLogout }) {
                               <td style={styles.td}>
                                 <span>{al.destination}</span>
                               </td>
-                              <td style={styles.td} style={{ textAlign: 'right' }}>
+                              <td style={{ ...styles.td, textAlign: 'right' }}>
                                 <button 
                                   onClick={() => handleDeleteAlias(al.id)}
                                   style={styles.deleteActionBtn}
@@ -744,75 +721,52 @@ export default function TenantDashboardView({ onBackToWebmail, onLogout }) {
             </div>
           )}
 
-          {/* TAB: BILLING */}
+          {/* TAB: WORKSPACE INFO */}
           {activeTab === 'billing' && (
             <div style={styles.tabContent}>
               <div style={styles.billingHeader}>
-                <Building size={48} color="#6366f1" />
-                <h2 style={{ fontSize: '1.5rem', fontWeight: '800', marginTop: '10px' }}>Workspace Subscription Management</h2>
-                <p style={{ color: 'var(--text-secondary)' }}>Manage your mail capacity plans and payment details securely.</p>
+                <Building size={48} color="var(--color-primary)" />
+                <h2 style={{ fontSize: '1.5rem', fontWeight: '800', marginTop: '10px' }}>Workspace Information</h2>
+                <p style={{ color: 'var(--text-secondary)' }}>Details about your self-hosted mail workspace.</p>
               </div>
 
-              {/* Plans Grid */}
-              <div style={styles.billingGrid}>
-                {/* Plan 1 */}
-                <div style={org?.tier === 'free' ? styles.billingCardActive : styles.billingCard}>
-                  <div style={styles.planTitleBar}>
-                    <h3 style={styles.planTitle}>Free Plan</h3>
-                    {org?.tier === 'free' && <span style={styles.activeLabel}>Current Plan</span>}
-                  </div>
-                  <div style={styles.priceText}>$0<span style={styles.pricePeriod}>/month</span></div>
-                  <ul style={styles.planList}>
-                    <li><CheckCircle2 size={14} color="#10b981" /> 1 Custom Domain</li>
-                    <li><CheckCircle2 size={14} color="#10b981" /> Up to 5 Email Mailboxes</li>
-                    <li><CheckCircle2 size={14} color="#10b981" /> 1 GB Max Quota per mailbox</li>
-                    <li><CheckCircle2 size={14} color="#10b981" /> Enforced TLS Transit Encryption</li>
-                  </ul>
-                  <button disabled style={styles.planBtnDisabled}>Free Tier</button>
+              <div style={{
+                maxWidth: '600px',
+                margin: '0 auto',
+                width: '100%',
+                backgroundColor: 'var(--bg-secondary)',
+                border: '1px solid var(--glass-border)',
+                borderRadius: 'var(--radius-lg)',
+                padding: '2rem',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '1.5rem'
+              }}>
+                <div>
+                  <h3 style={{ fontSize: '1.1rem', fontWeight: '700', marginBottom: '0.5rem' }}>Company Workspace</h3>
+                  <p style={{ fontSize: '0.95rem', color: 'var(--text-primary)' }}>{org?.name}</p>
+                </div>
+                
+                <div>
+                  <h3 style={{ fontSize: '1.1rem', fontWeight: '700', marginBottom: '0.5rem' }}>Infrastructure Domain</h3>
+                  <p style={{ fontSize: '0.95rem', color: 'var(--text-primary)' }}>mail.acetechnologys.com</p>
                 </div>
 
-                {/* Plan 2 */}
-                <div style={org?.tier === 'starter' ? styles.billingCardActive : styles.billingCard}>
-                  <div style={styles.planTitleBar}>
-                    <h3 style={styles.planTitle}>Starter Plan</h3>
-                    {org?.tier === 'starter' && <span style={styles.activeLabel}>Current Plan</span>}
-                  </div>
-                  <div style={styles.priceText}>$9<span style={styles.pricePeriod}>/month</span></div>
-                  <ul style={styles.planList}>
-                    <li><CheckCircle2 size={14} color="#10b981" /> 5 Custom Domains</li>
-                    <li><CheckCircle2 size={14} color="#10b981" /> Up to 20 Email Mailboxes</li>
-                    <li><CheckCircle2 size={14} color="#10b981" /> 5 GB Max Quota per mailbox</li>
-                    <li><CheckCircle2 size={14} color="#10b981" /> Enforced TLS Transit Encryption</li>
-                  </ul>
-                  {org?.tier === 'starter' ? (
-                    <button disabled style={styles.planBtnCurrent}>Active</button>
-                  ) : (
-                    <button onClick={() => handleUpgradeTier('starter')} style={styles.planBtnAction}>
-                      Upgrade to Starter
-                    </button>
-                  )}
-                </div>
-
-                {/* Plan 3 */}
-                <div style={org?.tier === 'pro' ? styles.billingCardActive : styles.billingCard}>
-                  <div style={styles.planTitleBar}>
-                    <h3 style={styles.planTitle}>Pro Plan</h3>
-                    {org?.tier === 'pro' && <span style={styles.activeLabel}>Current Plan</span>}
-                  </div>
-                  <div style={styles.priceText}>$29<span style={styles.pricePeriod}>/month</span></div>
-                  <ul style={styles.planList}>
-                    <li><CheckCircle2 size={14} color="#10b981" /> Unlimited Custom Domains</li>
-                    <li><CheckCircle2 size={14} color="#10b981" /> Unlimited Email Mailboxes</li>
-                    <li><CheckCircle2 size={14} color="#10b981" /> 20 GB Max Quota per mailbox</li>
-                    <li><CheckCircle2 size={14} color="#10b981" /> Enforced TLS Transit Encryption</li>
-                  </ul>
-                  {org?.tier === 'pro' ? (
-                    <button disabled style={styles.planBtnCurrent}>Active</button>
-                  ) : (
-                    <button onClick={() => handleUpgradeTier('pro')} style={styles.planBtnAction}>
-                      Upgrade to Pro
-                    </button>
-                  )}
+                <div>
+                  <h3 style={{ fontSize: '1.1rem', fontWeight: '700', marginBottom: '0.5rem' }}>Workspace Status</h3>
+                  <span style={{
+                    display: 'inline-block',
+                    fontSize: '0.75rem',
+                    fontWeight: '800',
+                    color: '#10b981',
+                    borderColor: '#10b981',
+                    backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                    padding: '0.25rem 0.5rem',
+                    borderRadius: '12px',
+                    border: '1px solid'
+                  }}>
+                    INTERNAL USE ONLY
+                  </span>
                 </div>
               </div>
             </div>
@@ -884,17 +838,7 @@ const styles = {
     borderRadius: '12px',
     border: '1px solid',
   },
-  free: {
-    color: '#94a3b8',
-    borderColor: '#94a3b8',
-    backgroundColor: 'rgba(148, 163, 184, 0.1)',
-  },
-  starter: {
-    color: '#6366f1',
-    borderColor: '#6366f1',
-    backgroundColor: 'rgba(99, 102, 241, 0.1)',
-  },
-  pro: {
+  proBadge: {
     color: '#fbbf24',
     borderColor: '#fbbf24',
     backgroundColor: 'rgba(251, 191, 36, 0.1)',
@@ -935,7 +879,7 @@ const styles = {
     padding: '0.75rem 1rem',
     backgroundColor: 'var(--color-primary-soft)',
     color: 'var(--color-primary)',
-    border: '1px solid rgba(99, 102, 241, 0.2)',
+    border: '1px solid rgba(26, 115, 232, 0.2)',
     borderRadius: 'var(--radius-md)',
     fontSize: '0.9rem',
     fontWeight: '600',
@@ -1012,7 +956,7 @@ const styles = {
   },
   inlineInput: {
     padding: '0.5rem 0.75rem',
-    backgroundColor: 'rgba(0, 0, 0, 0.2)',
+    backgroundColor: 'var(--bg-primary)',
     border: '1px solid var(--glass-border)',
     borderRadius: 'var(--radius-md)',
     color: 'var(--text-primary)',
@@ -1062,7 +1006,7 @@ const styles = {
   },
   cardActive: {
     padding: '1rem',
-    backgroundColor: 'rgba(99, 102, 241, 0.05)',
+    backgroundColor: 'rgba(26, 115, 232, 0.05)',
     border: '1px solid var(--color-primary)',
     borderRadius: 'var(--radius-md)',
     cursor: 'pointer',
@@ -1136,7 +1080,7 @@ const styles = {
     cursor: 'pointer',
   },
   dnsBox: {
-    backgroundColor: 'rgba(0, 0, 0, 0.2)',
+    backgroundColor: 'var(--bg-secondary)',
     padding: '1.25rem',
     borderRadius: 'var(--radius-md)',
     border: '1px solid var(--glass-border)',
@@ -1155,16 +1099,16 @@ const styles = {
     display: 'flex',
     flexDirection: 'column',
     gap: '0.4rem',
-    backgroundColor: 'rgba(0, 0, 0, 0.3)',
+    backgroundColor: 'var(--bg-primary)',
     padding: '0.75rem 1rem',
     borderRadius: '4px',
     fontFamily: 'monospace',
     fontSize: '0.8rem',
-    border: '1px solid rgba(255, 255, 255, 0.05)',
+    border: '1px solid var(--glass-border)',
   },
   code: {
-    color: '#fbbf24',
-    backgroundColor: 'rgba(0,0,0,0.2)',
+    color: 'var(--color-primary)',
+    backgroundColor: 'var(--bg-tertiary)',
     padding: '0.1rem 0.3rem',
     borderRadius: '3px',
   },
@@ -1186,7 +1130,7 @@ const styles = {
     alignItems: 'center',
     justifyContent: 'space-between',
     padding: '0.5rem 0.75rem',
-    backgroundColor: 'rgba(255, 255, 255, 0.01)',
+    backgroundColor: 'var(--bg-secondary)',
     border: '1px solid var(--glass-border)',
     borderRadius: '4px',
     fontSize: '0.85rem',
@@ -1231,7 +1175,7 @@ const styles = {
     padding: '1rem',
     borderRadius: 'var(--radius-md)',
     fontSize: '0.85rem',
-    border: '1px solid rgba(99, 102, 241, 0.1)',
+    border: '1px solid rgba(26, 115, 232, 0.1)',
   },
   verticalForm: {
     display: 'flex',
@@ -1241,7 +1185,7 @@ const styles = {
   emailInputWrapper: {
     display: 'flex',
     alignItems: 'center',
-    backgroundColor: 'rgba(0, 0, 0, 0.2)',
+    backgroundColor: 'var(--bg-primary)',
     border: '1px solid var(--glass-border)',
     borderRadius: 'var(--radius-md)',
     padding: '0.15rem',
@@ -1263,7 +1207,7 @@ const styles = {
   },
   domainSelect: {
     padding: '0.5rem',
-    backgroundColor: 'rgba(0, 0, 0, 0.4)',
+    backgroundColor: 'var(--bg-secondary)',
     border: 'none',
     borderRadius: 'var(--radius-md)',
     color: 'var(--text-primary)',
@@ -1273,7 +1217,7 @@ const styles = {
   },
   standardInput: {
     padding: '0.6rem 0.75rem',
-    backgroundColor: 'rgba(0, 0, 0, 0.2)',
+    backgroundColor: 'var(--bg-primary)',
     border: '1px solid var(--glass-border)',
     borderRadius: 'var(--radius-md)',
     color: 'var(--text-primary)',
@@ -1281,7 +1225,7 @@ const styles = {
   },
   standardSelect: {
     padding: '0.6rem 0.75rem',
-    backgroundColor: 'rgba(0, 0, 0, 0.2)',
+    backgroundColor: 'var(--bg-primary)',
     border: '1px solid var(--glass-border)',
     borderRadius: 'var(--radius-md)',
     color: 'var(--text-primary)',
@@ -1297,7 +1241,6 @@ const styles = {
     fontSize: '0.9rem',
     fontWeight: '600',
     cursor: 'pointer',
-    boxShadow: 'var(--shadow-primary)',
   },
   tableWrapper: {
     width: '100%',
@@ -1318,7 +1261,7 @@ const styles = {
     fontWeight: '600',
   },
   tr: {
-    borderBottom: '1px solid rgba(255, 255, 255, 0.02)',
+    borderBottom: '1px solid rgba(0, 0, 0, 0.05)',
   },
   td: {
     padding: '1rem',
@@ -1342,105 +1285,5 @@ const styles = {
     alignItems: 'center',
     textAlign: 'center',
     marginBottom: '2.5rem',
-  },
-  billingGrid: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(3, 1fr)',
-    gap: '1.5rem',
-  },
-  billingCard: {
-    padding: '2rem',
-    backgroundColor: 'var(--glass-bg)',
-    border: '1px solid var(--glass-border)',
-    borderRadius: 'var(--radius-lg)',
-    display: 'flex',
-    flexDirection: 'column',
-  },
-  billingCardActive: {
-    padding: '2rem',
-    backgroundColor: 'rgba(99, 102, 241, 0.03)',
-    border: '2px solid var(--color-primary)',
-    borderRadius: 'var(--radius-lg)',
-    display: 'flex',
-    flexDirection: 'column',
-    position: 'relative',
-  },
-  planTitleBar: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: '0.5rem',
-  },
-  planTitle: {
-    fontSize: '1.25rem',
-    fontWeight: '800',
-  },
-  activeLabel: {
-    fontSize: '0.7rem',
-    fontWeight: '800',
-    backgroundColor: 'rgba(16, 185, 129, 0.1)',
-    color: '#10b981',
-    padding: '0.15rem 0.5rem',
-    borderRadius: '12px',
-    border: '1px solid rgba(16, 185, 129, 0.2)',
-  },
-  priceText: {
-    fontSize: '2rem',
-    fontWeight: '800',
-    marginBottom: '1.5rem',
-  },
-  pricePeriod: {
-    fontSize: '0.9rem',
-    color: 'var(--text-secondary)',
-    fontWeight: '500',
-  },
-  planList: {
-    listStyle: 'none',
-    padding: 0,
-    margin: '0 0 2rem 0',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '0.75rem',
-    fontSize: '0.85rem',
-    color: 'var(--text-secondary)',
-  },
-  planListLi: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '0.5rem',
-  },
-  planBtnDisabled: {
-    width: '100%',
-    padding: '0.75rem',
-    backgroundColor: 'rgba(255, 255, 255, 0.02)',
-    border: '1px solid var(--glass-border)',
-    borderRadius: 'var(--radius-md)',
-    color: 'var(--text-muted)',
-    fontWeight: '600',
-    cursor: 'not-allowed',
-    marginTop: 'auto',
-  },
-  planBtnCurrent: {
-    width: '100%',
-    padding: '0.75rem',
-    backgroundColor: 'rgba(16, 185, 129, 0.1)',
-    border: '1px solid rgba(16, 185, 129, 0.2)',
-    borderRadius: 'var(--radius-md)',
-    color: '#10b981',
-    fontWeight: '700',
-    cursor: 'not-allowed',
-    marginTop: 'auto',
-  },
-  planBtnAction: {
-    width: '100%',
-    padding: '0.75rem',
-    backgroundColor: 'var(--color-primary)',
-    color: '#ffffff',
-    border: 'none',
-    borderRadius: 'var(--radius-md)',
-    fontWeight: '600',
-    cursor: 'pointer',
-    marginTop: 'auto',
-    transition: 'background-color var(--transition-fast)',
   },
 };

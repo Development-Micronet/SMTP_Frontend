@@ -637,7 +637,7 @@ const styles = {
     backgroundColor: 'var(--bg-primary)',
     border: '1px solid var(--glass-border)',
     borderRadius: 'var(--radius-md)',
-    color: '#ffffff',
+    color: 'var(--text-primary)',
     fontSize: '0.9rem',
   },
   formSelect: {
@@ -645,7 +645,7 @@ const styles = {
     backgroundColor: 'var(--bg-primary)',
     border: '1px solid var(--glass-border)',
     borderRadius: 'var(--radius-md)',
-    color: '#ffffff',
+    color: 'var(--text-primary)',
     fontSize: '0.9rem',
   },
   submitBtn: {

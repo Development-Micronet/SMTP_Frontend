@@ -34,10 +34,10 @@ export default function App() {
     return (
       <div style={styles.loadingContainer}>
         <div style={styles.loaderWrapper}>
-          <Mail size={40} color="#6366f1" className="animate-pulse" />
+          <Mail size={40} color="var(--color-primary)" className="animate-pulse" />
           <RefreshCw size={24} className="animate-spin" color="var(--color-primary)" style={{ marginTop: '15px' }} />
           <p style={{ marginTop: '10px', fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
-            Connecting to MailStack...
+            Connecting to Micronet Mail...
           </p>
         </div>
       </div>
