@@ -25,6 +25,7 @@ export default function WebmailView({ user, onLogout, onNavigateToAdmin, onNavig
   
   const [loadingList, setLoadingList] = useState(false);
   const [loadingDetails, setLoadingDetails] = useState(false);
+  const [detailsError, setDetailsError] = useState(null);
   const [syncingMailbox, setSyncingMailbox] = useState(false);
 
   const [showCompose, setShowCompose] = useState(false);
@@ -168,6 +169,7 @@ export default function WebmailView({ user, onLogout, onNavigateToAdmin, onNavig
     setSelectedMessage(msg);
     setLoadingDetails(true);
     setMessageDetails(null);
+    setDetailsError(null);
     try {
       const res = await request(`/api/messages/${encodeURIComponent(msg.folder)}/${msg.uid}/`);
       setMessageDetails(res);
@@ -176,6 +178,7 @@ export default function WebmailView({ user, onLogout, onNavigateToAdmin, onNavig
       setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, seen: true } : m));
     } catch (err) {
       console.error('Failed to fetch message details:', err);
+      setDetailsError(err.message || String(err));
     } finally {
       setLoadingDetails(false);
     }
@@ -633,6 +636,16 @@ export default function WebmailView({ user, onLogout, onNavigateToAdmin, onNavig
               <div style={styles.centerBox}>
                 <RefreshCw size={24} className="animate-spin" color="var(--color-primary)" />
                 <p style={{ marginTop: '10px', fontSize: '0.875rem' }}>Loading message content...</p>
+              </div>
+            ) : detailsError ? (
+              <div style={styles.centerBox}>
+                <ShieldAlert size={36} color="var(--color-danger)" />
+                <p style={{ marginTop: '10px', color: 'var(--color-danger)', fontWeight: '600' }}>
+                  Failed to load email
+                </p>
+                <p style={{ marginTop: '5px', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                  {detailsError}
+                </p>
               </div>
             ) : messageDetails ? (
               <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
