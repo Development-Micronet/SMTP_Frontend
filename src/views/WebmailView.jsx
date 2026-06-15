@@ -390,9 +390,17 @@ export default function WebmailView({ user, onLogout, onNavigateToAdmin, onNavig
     });
   };
 
-  const toggleSelectRow = (e, uid) => {
+  const toggleSelectRow = (e, msg) => {
     e.stopPropagation();
-    setSelectedUids(prev => ({ ...prev, [uid]: !prev[uid] }));
+    const groupUids = msg._groupUids || [msg.uid];
+    const isAnySelected = groupUids.some(uid => selectedUids[uid]);
+    setSelectedUids(prev => {
+      const next = { ...prev };
+      groupUids.forEach(uid => {
+        next[uid] = !isAnySelected;
+      });
+      return next;
+    });
   };
 
   const toggleStarRow = async (e, msg) => {
@@ -564,12 +572,83 @@ export default function WebmailView({ user, onLogout, onNavigateToAdmin, onNavig
     return () => clearTimeout(delayDebounce);
   }, [composeTo, composeCc, composeBcc, composeSubject, composeBody, showCompose]);
 
+  // Group messages by conversation_id
+  const getGroupedMessages = (msgList) => {
+    const groups = {};
+    const ungrouped = [];
+
+    msgList.forEach(m => {
+      if (m.conversation_id) {
+        if (!groups[m.conversation_id]) {
+          groups[m.conversation_id] = [];
+        }
+        groups[m.conversation_id].push(m);
+      } else {
+        ungrouped.push(m);
+      }
+    });
+
+    const groupedList = [];
+
+    // For each conversation group, create a single representative message
+    Object.keys(groups).forEach(convId => {
+      const groupMsgs = groups[convId];
+      // Sort messages in group by date descending to find the latest
+      groupMsgs.sort((a, b) => new Date(b.date) - new Date(a.date));
+      const latest = groupMsgs[0];
+      
+      const count = groupMsgs.length;
+      const anyUnread = groupMsgs.some(m => !m.seen);
+      const anyFlagged = groupMsgs.some(m => m.flagged);
+      
+      // Build display sender string from all senders in the conversation thread
+      const senders = [];
+      groupMsgs.slice().reverse().forEach(m => {
+        let display = m.from_addr;
+        if (m.from_addr.includes('<')) {
+          const match = m.from_addr.match(/^(.*?)\s*</);
+          if (match && match[1]) {
+            display = match[1].replace(/['"]/g, '').trim();
+          }
+        }
+        if (!senders.includes(display)) {
+          senders.push(display);
+        }
+      });
+      
+      groupedList.push({
+        ...latest,
+        _isGroup: true,
+        _count: count,
+        _senders: senders.join(', '),
+        seen: !anyUnread,
+        flagged: anyFlagged,
+        _groupUids: groupMsgs.map(m => m.uid)
+      });
+    });
+
+    ungrouped.forEach(m => {
+      groupedList.push({
+        ...m,
+        _isGroup: false,
+        _count: 1,
+        _senders: m.from_addr,
+        _groupUids: [m.uid]
+      });
+    });
+
+    // Sort the entire list by the latest message's date descending
+    groupedList.sort((a, b) => new Date(b.date) - new Date(a.date));
+    return groupedList;
+  };
+
+  const processedMessages = getGroupedMessages(messages);
   const startIndex = (currentPage - 1) * PAGE_SIZE;
   const endIndex = startIndex + PAGE_SIZE;
-  const paginatedMessages = messages.slice(startIndex, endIndex);
-  const startRange = messages.length === 0 ? 0 : startIndex + 1;
-  const endRange = Math.min(endIndex, messages.length);
-  const totalCount = messages.length;
+  const paginatedMessages = processedMessages.slice(startIndex, endIndex);
+  const startRange = processedMessages.length === 0 ? 0 : startIndex + 1;
+  const endRange = Math.min(endIndex, processedMessages.length);
+  const totalCount = processedMessages.length;
 
   return (
     <div style={styles.appContainer}>
@@ -719,14 +798,19 @@ export default function WebmailView({ user, onLogout, onNavigateToAdmin, onNavig
                 <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                   <input
                     type="checkbox"
-                    checked={paginatedMessages.length > 0 && paginatedMessages.every(m => selectedUids[m.uid])}
+                    checked={paginatedMessages.length > 0 && paginatedMessages.every(m => m._groupUids ? m._groupUids.every(uid => selectedUids[uid]) : selectedUids[m.uid])}
                     onChange={(e) => {
-                      const allSelected = paginatedMessages.every(m => selectedUids[m.uid]);
+                      const allSelected = paginatedMessages.every(m => m._groupUids ? m._groupUids.every(uid => selectedUids[uid]) : selectedUids[m.uid]);
                       if (allSelected) {
                         setSelectedUids({});
                       } else {
                         const nextSelected = { ...selectedUids };
-                        paginatedMessages.forEach(m => { nextSelected[m.uid] = true; });
+                        paginatedMessages.forEach(m => {
+                          const uids = m._groupUids || [m.uid];
+                          uids.forEach(uid => {
+                            nextSelected[uid] = true;
+                          });
+                        });
                         setSelectedUids(nextSelected);
                       }
                     }}
@@ -839,8 +923,8 @@ export default function WebmailView({ user, onLogout, onNavigateToAdmin, onNavig
                       <div style={{ display: 'flex', alignItems: 'center', gap: '10px', overflow: 'hidden', width: '75%' }}>
                         <input
                           type="checkbox"
-                          checked={!!selectedUids[msg.uid]}
-                          onChange={(e) => toggleSelectRow(e, msg.uid)}
+                          checked={msg._groupUids ? msg._groupUids.every(uid => selectedUids[uid]) : !!selectedUids[msg.uid]}
+                          onChange={(e) => toggleSelectRow(e, msg)}
                           style={styles.actionCheckbox}
                           onClick={(e) => e.stopPropagation()}
                         />
@@ -849,14 +933,14 @@ export default function WebmailView({ user, onLogout, onNavigateToAdmin, onNavig
                           style={{
                             display: 'flex',
                             alignItems: 'center',
-                            color: starredUids[msg.uid] ? '#f1c40f' : 'var(--text-muted)',
+                            color: starredUids[msg.uid] || msg.flagged ? '#f1c40f' : 'var(--text-muted)',
                             cursor: 'pointer',
                             padding: 0,
                             border: 'none',
                             backgroundColor: 'transparent'
                           }}
                         >
-                          <Star size={16} fill={starredUids[msg.uid] ? '#f1c40f' : 'transparent'} />
+                          <Star size={16} fill={starredUids[msg.uid] || msg.flagged ? '#f1c40f' : 'transparent'} />
                         </button>
                         {!msg.seen && (
                           <div style={{
@@ -870,14 +954,21 @@ export default function WebmailView({ user, onLogout, onNavigateToAdmin, onNavig
                         <span style={{
                           ...styles.msgFrom,
                           fontWeight: !msg.seen ? '700' : '500',
-                        }}>{msg.from_addr}</span>
+                        }}>{msg._senders || msg.from_addr}</span>
                       </div>
                       <span style={styles.msgDate}>{formatDate(msg.date)}</span>
                     </div>
                     <div style={{
                       ...styles.msgSubject,
                       fontWeight: !msg.seen ? '700' : '400',
-                    }}>{msg.subject || '(No Subject)'}</div>
+                    }}>
+                      {msg.subject || '(No Subject)'}
+                      {msg._count > 1 && (
+                        <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginLeft: '5px' }}>
+                          ({msg._count})
+                        </span>
+                      )}
+                    </div>
                     <div style={styles.msgSnippet}>{msg.snippet}</div>
                     <div style={styles.msgActions}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
