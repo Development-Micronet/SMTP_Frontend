@@ -472,22 +472,51 @@ export default function WebmailView({ user, onLogout, onNavigateToAdmin, onNavig
     }
   };
 
+  const getReplyRecipient = (msgDetails) => {
+    if (!msgDetails) return '';
+    const thread = msgDetails.thread || [];
+    const lastMsg = thread.length > 0 ? thread[thread.length - 1] : msgDetails;
+    
+    const cleanEmail = (emailStr) => {
+      if (!emailStr) return '';
+      const match = emailStr.match(/<([^>]+)>/);
+      return match ? match[1].trim() : emailStr.trim();
+    };
+
+    const senderEmail = lastMsg.sender_email || cleanEmail(lastMsg.from);
+    const myEmail = user.mailbox ? user.mailbox.toLowerCase().trim() : '';
+    
+    if (senderEmail.toLowerCase().trim() === myEmail) {
+      const toField = lastMsg.to || [];
+      const recipients = Array.isArray(toField) ? toField : [toField];
+      const otherRecipients = recipients
+        .map(r => cleanEmail(r).toLowerCase().trim())
+        .filter(r => r && r !== myEmail);
+      if (otherRecipients.length > 0) {
+        const matched = recipients.find(r => cleanEmail(r).toLowerCase().trim() === otherRecipients[0]);
+        return matched || otherRecipients[0];
+      }
+      return lastMsg.from || senderEmail;
+    }
+    return lastMsg.from || senderEmail;
+  };
+
   const initiateReply = (type) => {
     setReplyType(type);
     setReplyBody('');
     setReplyAttachments([]);
     if (type === 'reply' || type === 'reply_all') {
-      setReplyTo(messageDetails.from);
+      setReplyTo(getReplyRecipient(messageDetails));
     } else {
       setReplyTo('');
     }
   };
-
+ 
   const handleSendReply = async (e) => {
     e.preventDefault();
     let toRecipient = replyTo;
     if (replyType === 'reply' || replyType === 'reply_all') {
-      toRecipient = messageDetails.from;
+      toRecipient = getReplyRecipient(messageDetails);
     }
     
     if (!toRecipient.trim()) {
@@ -504,9 +533,26 @@ export default function WebmailView({ user, onLogout, onNavigateToAdmin, onNavig
       formData.append('in_reply_to', messageDetails.message_id || '');
       formData.append('references', messageDetails.references || messageDetails.message_id || '');
       
-      if (replyType === 'reply_all' && messageDetails.to) {
-        // Add CCs (excluding user's address)
-        const allRecipients = messageDetails.to.filter(email => email.toLowerCase() !== user.mailbox.toLowerCase());
+      if (replyType === 'reply_all') {
+        const thread = messageDetails.thread || [];
+        const lastMsg = thread.length > 0 ? thread[thread.length - 1] : messageDetails;
+        const toField = lastMsg.to || [];
+        const toList = Array.isArray(toField) ? toField : [toField];
+        
+        const cleanEmail = (emailStr) => {
+          if (!emailStr) return '';
+          const match = emailStr.match(/<([^>]+)>/);
+          return match ? match[1].trim() : emailStr.trim();
+        };
+        
+        const myEmail = user.mailbox ? user.mailbox.toLowerCase().trim() : '';
+        const cleanToRecipient = cleanEmail(toRecipient).toLowerCase().trim();
+        
+        const allRecipients = toList.filter(email => {
+          const cleanR = cleanEmail(email).toLowerCase().trim();
+          return cleanR !== myEmail && cleanR !== cleanToRecipient;
+        });
+        
         if (allRecipients.length > 0) {
           formData.append('cc', allRecipients.join(','));
         }
