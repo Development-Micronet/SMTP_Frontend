@@ -228,7 +228,7 @@ export default function WebmailView({ user, onLogout, onNavigateToAdmin, onNavig
     setLoadingList(true);
     try {
       const res = await request(`/api/search/?q=${encodeURIComponent(searchQuery)}`);
-      setMessages(res.results || []);
+      setMessages(res.results || res || []);
     } catch (err) {
       console.error('Search error:', err);
     } finally {
@@ -311,21 +311,36 @@ export default function WebmailView({ user, onLogout, onNavigateToAdmin, onNavig
     setSending(true);
 
     try {
-      const formData = new FormData();
-      formData.append('to', composeTo);
-      if (composeCc.trim()) formData.append('cc', composeCc);
-      if (composeBcc.trim()) formData.append('bcc', composeBcc);
-      formData.append('subject', composeSubject);
-      formData.append('body', composeBody);
-      if (draftId) formData.append('draft_id', draftId);
-      
-      attachments.forEach((file) => {
-        formData.append('attachments', file);
-      });
+      let bodyData;
+      let headers = {};
+
+      if (attachments.length > 0) {
+        bodyData = new FormData();
+        bodyData.append('to', composeTo);
+        if (composeCc.trim()) bodyData.append('cc', composeCc);
+        if (composeBcc.trim()) bodyData.append('bcc', composeBcc);
+        bodyData.append('subject', composeSubject);
+        bodyData.append('body', composeBody);
+        if (draftId) bodyData.append('draft_id', draftId);
+        attachments.forEach((file) => {
+          bodyData.append('attachments', file);
+        });
+      } else {
+        headers['Content-Type'] = 'application/json';
+        bodyData = JSON.stringify({
+          to: composeTo.split(',').map(email => email.trim()).filter(Boolean),
+          cc: composeCc.trim() ? composeCc.split(',').map(email => email.trim()).filter(Boolean) : undefined,
+          bcc: composeBcc.trim() ? composeBcc.split(',').map(email => email.trim()).filter(Boolean) : undefined,
+          subject: composeSubject,
+          body: composeBody,
+          draft_id: draftId || undefined
+        });
+      }
 
       await request('/api/send/', {
         method: 'POST',
-        body: formData,
+        headers,
+        body: bodyData,
       });
 
       alert('Message sent successfully!');
@@ -526,13 +541,10 @@ export default function WebmailView({ user, onLogout, onNavigateToAdmin, onNavig
     
     setReplySending(true);
     try {
-      const formData = new FormData();
-      formData.append('to', toRecipient);
-      formData.append('subject', replyType === 'forward' ? `Fwd: ${messageDetails.subject}` : `Re: ${messageDetails.subject}`);
-      formData.append('body', replyBody);
-      formData.append('in_reply_to', messageDetails.message_id || '');
-      formData.append('references', messageDetails.references || messageDetails.message_id || '');
+      let bodyData;
+      let headers = {};
       
+      const parsedCc = [];
       if (replyType === 'reply_all') {
         const thread = messageDetails.thread || [];
         const lastMsg = thread.length > 0 ? thread[thread.length - 1] : messageDetails;
@@ -548,23 +560,43 @@ export default function WebmailView({ user, onLogout, onNavigateToAdmin, onNavig
         const myEmail = user.mailbox ? user.mailbox.toLowerCase().trim() : '';
         const cleanToRecipient = cleanEmail(toRecipient).toLowerCase().trim();
         
-        const allRecipients = toList.filter(email => {
+        toList.forEach(email => {
           const cleanR = cleanEmail(email).toLowerCase().trim();
-          return cleanR !== myEmail && cleanR !== cleanToRecipient;
+          if (cleanR !== myEmail && cleanR !== cleanToRecipient) {
+            parsedCc.push(email);
+          }
         });
-        
-        if (allRecipients.length > 0) {
-          formData.append('cc', allRecipients.join(','));
-        }
       }
-      
-      replyAttachments.forEach(file => {
-        formData.append('attachments', file);
-      });
+
+      if (replyAttachments.length > 0) {
+        bodyData = new FormData();
+        bodyData.append('to', toRecipient);
+        bodyData.append('subject', replyType === 'forward' ? `Fwd: ${messageDetails.subject}` : `Re: ${messageDetails.subject}`);
+        bodyData.append('body', replyBody);
+        bodyData.append('in_reply_to', messageDetails.message_id || '');
+        bodyData.append('references', messageDetails.references || messageDetails.message_id || '');
+        if (parsedCc.length > 0) {
+          bodyData.append('cc', parsedCc.join(','));
+        }
+        replyAttachments.forEach(file => {
+          bodyData.append('attachments', file);
+        });
+      } else {
+        headers['Content-Type'] = 'application/json';
+        bodyData = JSON.stringify({
+          to: toRecipient.split(',').map(email => email.trim()).filter(Boolean),
+          subject: replyType === 'forward' ? `Fwd: ${messageDetails.subject}` : `Re: ${messageDetails.subject}`,
+          body: replyBody,
+          in_reply_to: messageDetails.message_id || undefined,
+          references: messageDetails.references || messageDetails.message_id || undefined,
+          cc: parsedCc.length > 0 ? parsedCc.map(email => email.trim()).filter(Boolean) : undefined
+        });
+      }
       
       await request('/api/send/', {
         method: 'POST',
-        body: formData,
+        headers,
+        body: bodyData,
       });
       
       alert('Reply sent successfully!');
@@ -1145,7 +1177,7 @@ export default function WebmailView({ user, onLogout, onNavigateToAdmin, onNavig
                                   <span style={styles.senderDate}>{formatDate(t.date)}</span>
                                 </div>
                                 <div style={styles.recipientRow}>
-                                  to {t.to}
+                                  to {Array.isArray(t.to) ? t.to.join(', ') : t.to}
                                 </div>
                               </div>
                             ) : (
